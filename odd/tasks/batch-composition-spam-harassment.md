@@ -152,9 +152,23 @@ Pools, from `benchmark/data/items.jsonl` (2,531 labelled: 1,658 clean, 319 haras
       flagging, so it stops being corrected, and it stays off. **The feature silently disables the
       category in exactly the channels it was built for.** Belongs to JEV-12, which already names
       `policy.nudge()` as the thing that moves a threshold without storing anything.
-- [ ] T6e. The one-message-per-request arm. Absolute movement correlates with each score's own
-      `p(1-p)` at r = +0.60 to +0.68, including inside `pure2` where nothing changed, so "mid-range
-      scores are intrinsically unstable" is not yet separated from "batching destabilises them".
+- [x] T6e. The one-message-per-request arm. **The rival explanation is dead**: a message asked alone
+      twice moves exactly as little as a batch repeated (mean 0.011, 2 flips against 4), so mid-range
+      scores are not intrinsically unstable. Regrouping against a single-message repeat is
+      b/c = 18/2, p = 0.000. Batching is the cause.
+- [x] T6g. **And the arm found something larger than this whole task on the way.** The same 300
+      messages at four batch sizes: spam recall at 0.85 is 17.3% alone, 32.0% at five, 38.7% at ten,
+      37.3% at twenty-five, while the false-positive rate stays at 2.7% to 4.0%. 139 of 150 spam
+      messages score higher batched than alone, 6 lower, sign test p = 2.35e-12, median shift +0.19.
+      It is real discrimination rather than inflation, and `harassment` does not move at all, which
+      fits: spam is a judgement about what is normal here and one message is not a here.
+      **`Batcher` collects for a fixed time window, so batch size is the server's traffic.** A quiet
+      Discord server runs spam at 17% recall and a busy one at 37%, same threshold, same messages,
+      nobody told. Every published spam figure in the repo was measured at batch 25, the favourable
+      end. Needs its own issue; the fix is to stop batch size varying with traffic.
+- [x] T6h. The repeat control is not perfectly unbiased: `pure2` beats `pure` on 70 messages against
+      20, p = 0.000, a systematic +0.007. A twenty-seventh of the batch effect, changes nothing here,
+      but "a repeated request is deterministic" should not be written as though it were.
 
 ## Acceptance
 
@@ -190,6 +204,8 @@ T6a and T6c done: `AGENTS.md` now says how much margin a test may assume and why
 whether the request repeats, and `REPORT2.md`, `REPORT3.md` and `deterministic.py` no longer describe
 a regrouping as "nothing changed at all".
 
-T6d done, and it was the biggest thing this measurement turned up that is not about batching.
+T6d, T6e, T6g and T6h done. The batch-size finding in T6g is larger than the question this task was
+opened to answer, and it is the only thing here already costing real servers something.
 
-Next: T6b (what the site owes a reader) and T6e (the one-message-per-request arm).
+Next: T6b (what the site owes a reader), now with more to say than when it was written, and an issue
+for T6g.

@@ -1,7 +1,7 @@
 # Does a message's score depend on its batch? Spam and harassment, measured.
 
-Run on 2026-09-22 against the live TypeSafe API from `benchmark/batch_effect.py`. 600 messages, six
-conditions, 3,600 judgements, 144 requests, 4.4M input tokens, **$0.19**. Raw results are committed
+Run on 2026-09-22 and 2026-09-23 against the live TypeSafe API from `benchmark/batch_effect.py`. 600
+messages, ten conditions, 4,800 judgements, 822 requests, 6.0M input tokens, **$0.25**. Raw results are committed
 at `benchmark/results/batch_effect.jsonl`, so every table below recomputes for free.
 
 JEV-56. `ai_detect/REPORT2.md` measured this for `ai_generated` and then asserted, without measuring
@@ -272,22 +272,89 @@ This does not belong in this branch to fix. JEV-12 already exists to capture hum
 properly and already names `policy.nudge()` as the thing that moves a threshold without storing
 anything. This is the measurement that says how urgent that is.
 
+## 7. The rival explanation is dead, and what killed it is worse
+
+Section 5 left one explanation standing: absolute movement correlates with each score's own `p(1−p)`
+at r = +0.60 to +0.68, *including inside `pure2` where nothing changed*, so "mid-range scores are
+intrinsically unstable" was not separated from "batching destabilises them". Two more arms settle it.
+Each of the 150 spam and 150 clean messages was asked **entirely alone**, one message per request,
+and then asked alone again.
+
+| comparison | mean abs. movement | p95 | flips across 0.85 |
+|---|---|---|---|
+| the same batch of 25, asked twice | 0.011 | 0.040 | 4/150 |
+| **the same message alone, asked twice** | **0.011** | **0.030** | **2/150** |
+| regrouped into different batches of 25 | 0.073 | 0.200 | 18/150 |
+
+A message asked alone, twice, is exactly as steady as a batch repeated. **Mid-range scores are not
+intrinsically unstable**, and regrouping against a single-message repeat is b/c = 18/2, p = 0.000.
+Batching is the cause, and the question is closed.
+
+### What the single-message arm found instead
+
+The same 300 messages, in batches of four different sizes. Nothing else changed.
+
+| messages per request | mean score, spam | mean, clean | **recall@0.85** | FPR@0.85 |
+|---|---|---|---|---|
+| **1** | 0.499 | 0.075 | **17.3%** | 2.7% |
+| 5 | 0.654 | 0.114 | 32.0% | 4.0% |
+| 10 | 0.703 | 0.109 | 38.7% | 4.0% |
+| **25** | 0.719 | 0.106 | **37.3%** | 3.3% |
+
+**Spam recall more than doubles between a message judged alone and the same message judged with
+twenty-four others.** 139 of the 150 spam messages score higher in a batch than alone, 6 lower, 5
+tied; sign test p = 2.35e-12, median shift +0.19, quartiles +0.04 to +0.37. It is not a handful of
+outliers and it is not drift: it is a systematic shift of the whole distribution, and it saturates
+around ten messages.
+
+The false-positive rate barely moves, 2.7% to 4.0%, so this is not inflation. It is **real
+discrimination the model only has when it can see a stream.** That is not misbehaviour; spam is a
+judgement about what is normal here, and one message is not a here.
+
+**`harassment` does not move at all**, 0.037 against 0.036 on the same messages. Which fits: an
+insult is an insult on its own, and the spam question is the one that needs neighbours.
+
+### Why this matters in production, today
+
+`Batcher` collects messages per tenant for a fixed time window and sends whatever arrived
+(`core/service.py`; the Discord bot uses 2 seconds). **Batch size is not a setting. It is the
+server's traffic.**
+
+So a quiet Discord server, where messages arrive one at a time, runs its spam category at 17%
+recall. A busy one runs the same category, on the same threshold, at 37%. Neither owner is told, and
+the quiet server is the one least able to notice. Every published spam figure in this repository was
+measured at batch 25 (`run_jevmod.py`, `BATCH = 25`), which is the favourable end.
+
+This is a bigger defect than the one this report set out to measure, and it has a direction: the fix
+is to stop the batch size varying with traffic, not to tell owners to have busier servers.
+
+### One thing the controls turned up against themselves
+
+The repeated-identical-batch control is not perfectly unbiased: `pure2` scores higher than `pure` on
+70 messages and lower on 20, p = 0.000, a systematic +0.007. That is a twenty-seventh of the batch
+effect and does not change any conclusion here, but "a repeated request is deterministic" is not
+quite true and should not be written as though it were.
+
 ## What to do
 
 1. **Fix the `AGENTS.md` rule** so it distinguishes a repeated request from a rerun.
 2. **Do not tune a threshold on a single message's score**, in the dashboard or in a bot command.
    The reaction nudge moves a threshold by 0.03 on one reaction, inside the noise for 65% of spam
    messages. Section 6 is that look, and it found worse than imprecision.
-3. **Run the one-message-per-request arm** before believing this is about batching at all.
+3. ~~Run the one-message-per-request arm before believing this is about batching at all.~~ Done,
+   section 7. It is about batching, and the arm found something larger on the way.
 4. **Do not close JEV-56 for harassment.** Re-run it when the labelled set passes 500 harassment
    messages, and link it to JEV-11 and JEV-7 as a dependency in that direction.
 5. **Treat the reaction loop as a live defect**, not a rough edge: section 6. It drives the category
    to a state it cannot leave, at the spam rates real servers have. It belongs to JEV-12.
+6. **Stop batch size varying with traffic**, section 7. This is the largest effect in this report and
+   the only one that is already hurting real servers. It needs its own issue.
 
 ## Reproduce
 
 ```
 python -m benchmark.nudge_loop                           # free, section 6, no API calls
+python -m benchmark.batch_effect ask single              # paid; likewise single2, batch5, batch10
 python -m benchmark.batch_effect pools                   # free: pools, drops, batch counts
 python -m benchmark.batch_effect pilot                   # paid, one batch per condition
 python -m benchmark.batch_effect ask pure                # paid, and likewise pure2, reordered,

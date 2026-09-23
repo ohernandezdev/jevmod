@@ -14,6 +14,8 @@ Six conditions over the same messages, 25 per request, the production batching c
     reshuffled  the same side, regrouped: different neighbours, same composition
     mixed       the batch is about half the other side, interleaved
     mixed_shuffled  half the other side, and the membership randomised as hard as `reshuffled`
+    single          one message per request, no batch at all
+    single2         the same, asked again: the noise floor when there is nothing to share a batch with
 
 Each one holds everything constant but one thing, so a flip can be attributed:
 
@@ -25,6 +27,13 @@ Each one holds everything constant but one thing, so a flip can be attributed:
   `pure2` is low only because the prompt repeats exactly, `reordered` is the honest noise floor.
 - `reshuffled` changes which messages share the batch, holding the composition at all-one-side.
 - `mixed_shuffled` changes the composition, at the same neighbour randomisation as `reshuffled`.
+- `single` and `single2` remove the batch. They settle the last rival explanation: absolute movement
+  correlates with each score's own `p(1-p)` at r = +0.60 to +0.68, *including inside `pure2` where
+  nothing changed*, so "mid-range scores are intrinsically unstable" was not separated from
+  "batching destabilises them". If a message asked entirely alone, twice, moves as much as it does
+  between batches, batching is innocent and the score is simply soft in the middle. If it is as
+  steady as `pure2`, batching is the cause. These two arms run on the spam pools only, which is
+  where the effect reached significance.
 
 **`mixed` is kept only because it is the arm the first version of this experiment had, and it is a
 trap.** It interleaves the two pools in pool order, so every message keeps about half of its original
@@ -90,7 +99,8 @@ RESHUFFLE_SEED = 560  # a different grouping of the same pools, not a different 
 REORDER_SEED = 5600   # a different order inside each batch, not a different batch
 MIX_SEED = 5656       # randomises membership of the mixed arm to reshuffled's level
 PER_POOL = 150
-CONDITIONS = ("pure", "pure2", "reordered", "reshuffled", "mixed", "mixed_shuffled")
+CONDITIONS = ("pure", "pure2", "reordered", "reshuffled", "mixed", "mixed_shuffled",
+              "single", "single2", "batch5", "batch10")
 
 
 def _items() -> list[dict]:
@@ -157,6 +167,19 @@ def batches(condition: str) -> list[list[dict]]:
                     order.shuffle(chunk)
             out += chunks
         return out
+    if condition.startswith("batch") and condition[5:].isdigit():
+        # The same pools cut into a different batch size. `single` found the same messages score 0.22
+        # higher on spam inside a batch of 25 than alone, which is a bias rather than a drift and is
+        # larger than every flip effect in this file. `Batcher` uses a 2 second window, so a real
+        # server's batch size is whatever its traffic delivers. These arms are the curve between.
+        n = int(condition[5:])
+        items = p["spam"] + p["clean_vs_spam"]
+        return [items[i : i + n] for i in range(0, len(items), n)]
+    if condition in ("single", "single2"):
+        # One message per request. The spam arm only: 300 requests per run, against 12 for a batched
+        # condition, so running all four pools would quadruple the wall clock to answer a question
+        # that is only open for spam.
+        return [[it] for it in p["spam"] + p["clean_vs_spam"]]
     if condition in ("mixed", "mixed_shuffled"):
         mix = random.Random(MIX_SEED)
         for pos, neg in (("spam", "clean_vs_spam"), ("harassment", "clean_vs_harassment")):
