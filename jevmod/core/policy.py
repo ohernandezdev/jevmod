@@ -42,7 +42,18 @@ DEFAULT_THRESHOLDS = {
     "harassment": 0.75,
     "nsfw": 0.8,
     "offtopic": 0.9,
-    "selfharm": 0.8,
+    # 0.50, and the number comes from a loss ratio Omar chose rather than from F1. Asked how many
+    # false positives a missed cry for help is worth, the answer was fifty. Minimising 50*FN + FP on
+    # the 51 labelled rows in `benchmark/data/items.jsonl` puts the line at 0.04, which would flag
+    # 121 messages of 2,531 and bury the real ones in a queue nobody finishes: a loss function that
+    # ignores a moderator's attention says "flag everything" and has to be read with that in mind.
+    #
+    # 0.50 is the lowest the product can express -- `_clamp` below and the site's own control both
+    # floor there -- and it is also where the loss stops falling within that range. Against the 0.80
+    # this replaces, measured on the same rows: 24 misses become 14, and 3 false positives become 8.
+    # Recall 0.529 to 0.725, on an AUROC of 0.994, so the ordering was always good enough and the
+    # line was simply in the wrong place. `benchmark/EVAL.md` section 4, JEV-59.
+    "selfharm": 0.5,
     "doxxing": 0.8,
     "minors": 0.7,
     "ai_generated": 0.85,  # experimental, see benchmark/ai_detect/REPORT.md

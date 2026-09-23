@@ -501,3 +501,21 @@ def test_no_adapter_can_ban_anybody():
         )
         for forbidden in ("banned.add", ".ban(", "ban_reason", ".kick("):
             assert forbidden not in code, f"{f.name} can ban or kick somebody: {forbidden}"
+
+
+def test_selfharm_ships_at_the_line_a_chosen_loss_ratio_puts_it_at():
+    """JEV-59. The number is not F1's and not a guess: asked how many false positives a missed cry
+    for help is worth, the answer was fifty, and 50*FN + FP is what picks the line.
+
+    Minimised literally on the 51 labelled rows the answer is 0.04, which flags 121 of 2,531 and
+    buries the real cases. 0.50 is the lowest the product can express, and the loss is still falling
+    when it gets there, so the floor and the loss agree. Measured against the 0.80 this replaced:
+    24 misses become 14 and 3 false positives become 8, on an AUROC of 0.994.
+
+    Asserted rather than commented because a threshold that drifts back up is a category that
+    quietly stops catching people, and nothing else in the suite would notice.
+    """
+    from jevmod.core.policy import DEFAULT_ACTIONS, DEFAULT_THRESHOLDS
+
+    assert DEFAULT_THRESHOLDS["selfharm"] == 0.5
+    assert DEFAULT_ACTIONS["selfharm"] == "flag", "flag-only is what makes a false positive cheap"
