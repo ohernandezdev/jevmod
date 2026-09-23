@@ -64,6 +64,17 @@ class Message:
     author: str = ""
     channel_topic: str = ""
     author_trusted: bool = False
+    # Which channel this was said in, when the platform has more than one under a single tenant.
+    # Only Discord does: a guild is the tenant and its channels are separate conversations, so
+    # without this the context window would paste #general under a message in #support. Telegram,
+    # Reddit, Twitch and YouTube each make the tenant and the conversation the same thing and leave
+    # it empty. Local only, like `author`: it never reaches Jev.
+    channel: str = ""
+    # What was said in this channel just before, oldest first. Filled by `ModerationService` from
+    # `core.context.ConversationBuffer`, so every adapter gets it without changing. Message text
+    # only: an author name here would break the promise in AGENTS.md and the privacy notice, and
+    # the buffer that fills it cannot hold one.
+    context: tuple[str, ...] = ()
 
 
 @dataclass
@@ -130,7 +141,7 @@ class Judge:
                 out[m.id] = Verdict(m.id, {}, False, why)
                 continue
             text = normalize(m.text)
-            key = _key(text, m.channel_topic, cats, custom_rules)
+            key = _key(text, m.channel_topic, cats, custom_rules, m.context)
             hit = self.cache.get(key)
             if hit and now - hit[0] < self.cache_ttl:
                 out[m.id] = Verdict(m.id, dict(hit[1]), True, "cache", dict(hit[2]))
@@ -138,10 +149,24 @@ class Judge:
             to_judge.append((m, text))
 
         if to_judge and (cats or custom_rules):
-            # only the text and the channel topic reach Jev: no author names, no ids beyond the position
+            # Only message text and the channel topic reach Jev: no author names, no ids beyond the
+            # position. Context is other people's message text, which is the same kind of data and
+            # not a new one, so the promise in AGENTS.md and the privacy notice still holds exactly
+            # as written. Sending anything about the author is a different decision, gated on
+            # JEV-20 to JEV-22, and is not this.
             state: dict[str, Any] = {
                 "messages": {
-                    f"m{i}": {"text": text, "channel_topic": m.channel_topic or "general chat"}
+                    f"m{i}": {
+                        "text": text,
+                        "channel_topic": m.channel_topic or "general chat",
+                        # Keyed by position like the messages themselves, and for consistency rather
+                        # than for the original reason: the list-versus-dict finding above is about
+                        # positions that carry questions, and no question points at a context entry.
+                        # A dict costs a handful of tokens and keeps one rule in this file instead
+                        # of two. Omitted entirely when empty, so a message with no history reaches
+                        # Jev in exactly the shape it did before this existed.
+                        **({"context": {f"c{j}": c for j, c in enumerate(m.context)}} if m.context else {}),
+                    }
                     for i, (m, text) in enumerate(to_judge)
                 },
                 "custom_rules": custom_rules,
@@ -169,7 +194,7 @@ class Judge:
             for i, (m, text) in enumerate(to_judge):
                 scores = {c: _p(resp.answers[f"{c}_{i}"]) for c in cats}
                 custom = {name: _p(resp.answers[f"custom__{name}_{i}"]) for name in custom_rules}
-                self.cache[_key(text, m.channel_topic, cats, custom_rules)] = (now, scores, custom)
+                self.cache[_key(text, m.channel_topic, cats, custom_rules, m.context)] = (now, scores, custom)
                 out[m.id] = Verdict(m.id, scores, True, "jev", custom)
         elif to_judge:
             for m, _ in to_judge:
@@ -183,7 +208,21 @@ def _p(answer: Any) -> float:
     return float(answer.noul)
 
 
-def _key(text: str, topic: str, cats: list[str], rules: dict[str, str]) -> str:
+def _key(text: str, topic: str, cats: list[str], rules: dict[str, str], context: tuple[str, ...] = ()) -> str:
+    """The cache key. The context is part of it, and that costs hit rate on purpose.
+
+    Without it, a verdict computed while one conversation was happening is handed back during
+    another. That was always a little untrue and is now measured: JEV-56 found that regrouping the
+    same messages into different batches moves 12% of spam positives across their threshold, against
+    2.7% for a request repeated unchanged (`benchmark/BATCH_EFFECT.md`). The old key asserted that
+    two scorings of the same text are interchangeable, and they are not.
+
+    The hit rate is bought back by what a cache is actually for here. Its job is the spam wave: the
+    same text posted forty times in a minute. Those forty arrive in near-identical windows, so they
+    still share a key. What no longer shares a key is the same text a day later in a different
+    conversation, which is exactly the hit that was wrong.
+    """
     norm = text.lower()
-    h = hashlib.sha256(f"{norm}|{topic}|{','.join(cats)}|{sorted(rules.items())}".encode()).hexdigest()
+    ctx = "␟".join(context)  # a symbol no message text contains, so two windows cannot collide
+    h = hashlib.sha256(f"{norm}|{topic}|{','.join(cats)}|{sorted(rules.items())}|{ctx}".encode()).hexdigest()
     return h[:32]

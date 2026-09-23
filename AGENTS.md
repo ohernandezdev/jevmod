@@ -41,8 +41,11 @@ most severe action whose threshold is crossed, ties to the higher probability.
 
 Lower level: `Judge(client=None, cache_ttl_s=86400, timeout_s=20.0).judge(messages: list[Message],
 categories: list[str], custom_rules: dict[str, str] | None = None) -> list[Verdict]`;
-`Message(id, text, author="", channel_topic="", author_trusted=False)`; `Verdict(message_id,
-scores, judged, reason, custom)`. Errors surface as `typesafe_sdk.TypeSafeError` after 3 retries
+`Message(id, text, author="", channel_topic="", author_trusted=False, channel="", context=())`;
+`Verdict(message_id, scores, judged, reason, custom)`. `context` is what was said in this channel
+just before, oldest first, filled by `ModerationService` from `core/context.py` so every adapter
+gets it unchanged; `channel` only matters on Discord, where one tenant has many conversations.
+Both are local, like `author`: neither reaches Jev. Errors surface as `typesafe_sdk.TypeSafeError` after 3 retries
 (429/5xx, backoff, Retry-After) and a 20 s timeout. `Moderator` does not catch them.
 
 CLI: `jevmod check [text | -] [--topic T] [--rule R]... [--threshold X] [--json]`; exit 0 clean,
@@ -80,6 +83,7 @@ the exact exports; it is developed in parallel with this file.
 | `jevmod/categories.json` | the questions and criteria every implementation asks Jev; the only place they are defined |
 | `jevmod/core/policy.py` | `Policy`, `Decision`, `decide`, defaults |
 | `jevmod/core/service.py` | `ModerationService` (tenant policy, quota, audit log, fail-open) and `Batcher` (2 s window) |
+| `jevmod/core/context.py` | the conversation window: a bounded rolling buffer per channel and the assembler that trims it to a token budget |
 | `jevmod/core/store.py` | SQLite store: tenants, hashed API keys, usage, decisions (30-day retention) |
 | `jevmod/keys.py` | key lookup: `TYPESAFE_API_KEY`, then the OS keyring (extra `keyring`, in `[all]`), then `.env`; `jevmod init`, `jevmod init --forget` |
 | `jevmod/cli.py`, `jevmod/__main__.py` | `jevmod check` and the role runner |
@@ -128,6 +132,14 @@ red-team suite calls Jev about a hundred times; expect a minute and a few cents.
 - Every question carries `criteria` with `true` and `false`. Change questions only in
   `categories.json`, and re-run `tests/test_redteam.py`.
 - `selfharm` stays flag-only. `offtopic` stays off by default.
+- **The context window is ten messages and that number is measured.** `benchmark/BATCH_EFFECT.md`
+  section 7: spam recall at the shipped threshold is 17.3% at one message, 32.0% at five, 38.7% at
+  ten, 37.3% at twenty-five. It saturates at ten and twenty-five costs 2.5 times more per judged
+  message. Moving `WINDOW` means re-running `benchmark/batch_effect.py`, not arguing about it.
+- The conversation window is in memory and never persisted. Holding everybody's recent messages on
+  disk is a retention question the privacy notice does not answer; JEV-20 to JEV-22 own it. Erasure
+  still has to reach the window: `ModerationService.forget_context` exists because deleting rows
+  does not.
 - Only message text and `channel_topic` go to TypeSafe. No author names, ids or emails. This is enforced
   at `jevmod/judge.py:141`, promised in the privacy notice and stated on the home page. A decision exists
   to change it, gated on a rewritten privacy notice and a DPA: **do not change the code first.**
