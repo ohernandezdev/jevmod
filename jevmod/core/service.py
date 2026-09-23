@@ -20,6 +20,7 @@ from typesafe_sdk import TypeSafeError
 
 from ..judge import Judge, Message
 from . import local
+from .context import ConversationBuffer, assemble
 from .local import RepeatWindow
 from .policy import Decision, Policy, decide
 from .store import ENFORCE_PLANS, INACTIVE, Store
@@ -45,6 +46,26 @@ class ModerationService:
         # Public, because the adapter counts joins in the same window: an adapter reaching into a private
         # attribute is how two copies of a sixty second window end up disagreeing with each other.
         self.seen = RepeatWindow()
+        # What was said just before, per channel, bounded three ways (see core/context.py). In
+        # memory for the same reason as `seen`: it is a fifteen minute phenomenon, and persisting
+        # everybody's recent messages is a retention question the privacy notice does not answer
+        # today. JEV-20 to JEV-22 own that decision; losing the window on restart costs one slightly
+        # worse verdict and nothing else.
+        self.context = ConversationBuffer()
+
+    def _channel_key(self, tenant: str, m: Message) -> str:
+        """One window per conversation. Only Discord splits a tenant into channels; everywhere else
+        `m.channel` is empty and the tenant is the conversation."""
+        return f"{tenant}␟{m.channel}" if m.channel else tenant
+
+    def forget_context(self, tenant: str) -> None:
+        """Drop every window belonging to a tenant. `/mod forget`, leaving a server and
+        `DELETE /v1/tenant` all promise that what was stored about a server is gone, and a deque of
+        its recent messages is stored about that server."""
+        prefix = f"{tenant}␟"
+        for channel in self.context.channels():
+            if channel == tenant or channel.startswith(prefix):
+                self.context.forget(channel)
 
     @property
     def judge(self) -> Judge:
@@ -76,6 +97,23 @@ class ModerationService:
         # tenant sits on the default plan and there is no billing at all, never takes this branch.
         if ENFORCE_PLANS and self.store.plan(tenant) == INACTIVE:
             return [Decision(m.id, "none", None, 0.0, {}, False, "inactive") for m in messages]
+
+        # The conversation window, below the inactive gate on purpose: a tenant whose messages are
+        # not evaluated should not have its messages held in memory either. Above it, an inactive
+        # server would keep filling a buffer nobody reads, which is both waste and the wrong answer
+        # to "what do you keep about a server that stopped paying".
+        #
+        # The window is what was said before this batch, not inside it. Messages that share a batch
+        # already see each other: they sit at neighbouring positions in the same request, and adding
+        # them as context too would show the model the same sentence twice and tell it somebody
+        # repeated themselves. So every message reads first, and the batch is written after.
+        for m in messages:
+            m.context = assemble(self.context.window_for(self._channel_key(tenant, m), exclude=m.text))
+        for m in messages:
+            # Every message that arrived, judged or not. A pre-filtered "lol" is still part of what
+            # the conversation looked like, and a window holding only the messages worth judging is
+            # a window of an argument with the small talk taken out.
+            self.context.add(self._channel_key(tenant, m), m.text)
 
         # Local rules cost nothing per message, so they run before every gate below: a tenant that is out of
         # quota, over the shared budget, or has never enabled a single Jev category still gets its link

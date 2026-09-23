@@ -68,3 +68,44 @@ def test_cache_reuses_verdicts_and_custom_rules_work():
     assert v1[0].custom["no_politics"] >= 0.7 and v1[1].custom["no_politics"] < 0.4, [x.custom for x in v1]
     v2 = j.judge(m, ["spam"], rules)
     assert j.requests == 1 and all(x.reason == "cache" for x in v2)
+
+
+def test_context_changes_a_verdict_that_one_message_cannot_settle():
+    """JEV-17. The reason the context engine exists, asserted against the live model.
+
+    "yeah she totally deserves it lol" is an opinion about a game on its own and the fourth voice in
+    a pile-on when three people just agreed to drive somebody off the server. Judged alone the
+    engine cannot tell those apart, because until this change it only ever saw the one line.
+
+    The margin is 0.25 against a measured delta of 0.43 to 0.48 over three runs on 2026-09-23, which
+    is roughly twice the headroom. `AGENTS.md` asks for a margin rather than a value here for the
+    reason `benchmark/BATCH_EFFECT.md` measured: an exact number is not reproducible, a direction
+    this size is.
+    """
+    text = "yeah she totally deserves it lol"
+    pile_on = (
+        "everyone go spam her dms",
+        "shes such a waste of space",
+        "lets make her leave the server",
+    )
+    j = Judge(cache_ttl_s=0)  # the window is part of the cache key, but say so rather than rely on it
+    alone = j.judge([Message("1", text)], ["harassment"])[0]
+    in_context = j.judge([Message("1", text, context=pile_on)], ["harassment"])[0]
+    assert alone.judged and in_context.judged
+    assert in_context.scores["harassment"] - alone.scores["harassment"] >= 0.25, (
+        f"context should raise harassment here; got {alone.scores['harassment']:.2f} alone and "
+        f"{in_context.scores['harassment']:.2f} in context"
+    )
+
+
+def test_the_same_text_in_a_different_conversation_is_not_a_cache_hit():
+    """The cache key includes the window, so a verdict formed in one conversation is not handed back
+    in another. Measured reason in `_key`'s docstring: JEV-56 found 12% of spam positives cross
+    their threshold when the same text is scored among different neighbours."""
+    j = Judge()  # the real 24 hour TTL: the point is that the key misses, not that it expired
+    text = "yeah she totally deserves it lol"
+    first = j.judge([Message("1", text, context=("talking about the boss fight",))], ["harassment"])[0]
+    again = j.judge([Message("2", text, context=("talking about the boss fight",))], ["harassment"])[0]
+    other = j.judge([Message("3", text, context=("lets make her leave the server",))], ["harassment"])[0]
+    assert first.reason == "jev" and again.reason == "cache", "the same window must still hit"
+    assert other.reason == "jev", "a different window must not"

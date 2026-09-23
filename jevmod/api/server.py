@@ -201,6 +201,10 @@ def delete_tenant(tenant: str = Depends(tenant_from_auth)) -> dict[str, bool]:
     This is the same hole `on_guild_remove` had. The difference here is that nobody is present to read a
     warning: `/mod forget` is typed by a person who can be told to cancel, and an API call is not."""
     store.leave_tenant(tenant)
+    # The conversation window lives in memory, not in the store, so deleting rows does not reach it.
+    # An erasure that leaves the last ten messages of every channel sitting in a deque has not done
+    # what it told the caller it did.
+    service.forget_context(tenant)
     return {"deleted": True}
 
 

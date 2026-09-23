@@ -79,6 +79,7 @@ async def handle_batch(tenant: str, batch: list[discord.Message]) -> None:
             text=m.content,
             author=str(m.author.id),  # kept only in your local log for erasure requests; never sent to Jev
             channel_topic=topics.get(str(m.channel.id), getattr(m.channel, "topic", "") or "general chat"),
+            channel=str(m.channel.id),  # keeps each channel's context window its own; never sent to Jev
             author_trusted=_trusted(m.author, trusted, staff_exempt),
         )
         for m in batch
@@ -420,6 +421,7 @@ async def on_guild_remove(guild: discord.Guild) -> None:
     interaction to warn *in*. This process still never calls Stripe: `Store.leave_tenant` only writes to
     SQLite, and the hosted service's own sweep does the rest. See its docstring."""
     store.leave_tenant(tenant_of(guild.id))
+    service.forget_context(tenant_of(guild.id))  # in memory, so leave_tenant does not reach it
     log.info("left guild %s; data deleted, subscription (if any) queued for cancellation", guild.id)
 
 
@@ -1051,6 +1053,7 @@ async def forget_cmd(itx: discord.Interaction) -> None:
     # with no record left here to explain it. Say so before deleting, and leave the portal link in reach.
     paying = store.plan(tenant) != INACTIVE
     store.delete_tenant(tenant)
+    service.forget_context(tenant)  # in memory, so deleting rows does not reach it
     note = "all settings, usage and decision logs for this server were deleted"
     if paying:
         note += (
