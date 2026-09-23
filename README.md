@@ -29,6 +29,8 @@ On the [benchmark](BENCHMARK.md) (2,531 messages from OpenAI's moderation eval, 
 had the best AUROC in every category it was compared on in OpenAI's human-labelled set: harassment 0.93 and
 sexual 0.98 against Llama Guard 3 8B, ShieldGemma 2B and toxic-bert; self-harm 0.99 and minors 0.98 against Llama
 Guard, the only other system with those labels. Calibration was measured too; caveats are in the same file.
+Those four numbers were re-measured on 2026-09-23 after the engine changed under them and they did not move:
+repeat-run noise on AUROC is 0.001 and the shift was smaller than that. The workings are in the same file.
 
 ## The key, once
 

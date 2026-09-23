@@ -4,6 +4,12 @@ Run on 2026-09-18 on the same 2,531 messages. Scripts in `benchmark/`; the raw p
 are committed in `benchmark/results/` (`report.py` prints the tables from them). The datasets are not committed:
 `prepare.py` downloads the public sets and rebuilds `items.jsonl`. Each `run_*.py` is resumable.
 
+**jevmod's own rows were re-measured on 2026-09-23** after the engine changed under them, twice over, and they
+hold. What was re-run and what moved is in [Re-measured, and what it settled](#re-measured-and-what-it-settled)
+at the end. The three local models were not re-run: they are fixed local weights at temperature 0, so their rows
+are the same numbers they were. The Discord set was not re-run either, because its data is not committed and
+rebuilding it is a separate job; its rows are still from 2026-09-20 and are marked below.
+
 Added on 2026-09-20: a fourth set of 2,000 real Discord messages, jevmod only, because the three sets above are
 essays, forum comments and YouTube comments — none of them is the live chat register the product actually
 moderates. See "Discord scam" in the tables below.
@@ -42,32 +48,32 @@ spam policy; toxic-bert has none of those either.
 
 | set | category | system | AUROC | F1 @ default | best F1 (threshold) |
 |---|---|---|---|---|---|
-| OpenAI eval | harassment | **jevmod** | **0.930** | 0.748 | 0.751 (0.80) |
+| OpenAI eval | harassment | **jevmod** | **0.930** | 0.744 | 0.753 (0.85) |
 | | | Llama Guard 3 8B | 0.805 | 0.681 | 0.681 |
 | | | ShieldGemma 2B | 0.914 | 0.618 | 0.663 (0.80) |
 | | | toxic-bert | 0.807 | 0.423 | 0.445 |
-| OpenAI eval | nsfw | **jevmod** | **0.982** | **0.871** | 0.872 (0.85) |
+| OpenAI eval | nsfw | **jevmod** | **0.984** | **0.866** | 0.877 (0.85) |
 | | | Llama Guard 3 8B | 0.843 | 0.780 | 0.782 |
 | | | ShieldGemma 2B | 0.968 | 0.800 | 0.851 (0.90) |
 | | | toxic-bert | 0.876 | 0.549 | 0.574 |
-| OpenAI eval | selfharm | **jevmod** | **0.992** | 0.714 | 0.792 (0.35) |
+| OpenAI eval | selfharm | **jevmod** | **0.992** | 0.766 | 0.788 (0.40) |
 | | | Llama Guard 3 8B | 0.891 | **0.825** | 0.825 |
-| OpenAI eval | minors | **jevmod** | **0.977** | 0.519 | 0.645 (0.40) |
+| OpenAI eval | minors | **jevmod** | **0.978** | 0.551 | 0.651 (0.55) |
 | | | Llama Guard 3 8B | 0.590 | 0.248 | 0.248 |
-| OpenAI eval | any violation | jevmod | 0.939 | 0.762 | **0.825** (0.80) |
+| OpenAI eval | any violation | jevmod | 0.940 | 0.752 | **0.825** (0.85) |
 | | | Llama Guard 3 8B | 0.921 | **0.787** | 0.793 |
 | | | ShieldGemma 2B | 0.939 | 0.760 | 0.791 |
 | | | toxic-bert | 0.884 | 0.646 | 0.709 |
-| Civil Comments | harassment | jevmod | 0.875 | 0.659 | 0.707 (0.50) |
+| Civil Comments | harassment | jevmod | 0.875 | 0.667 | 0.709 (0.50) |
 | | | Llama Guard 3 8B | 0.539 | 0.159 | 0.159 |
 | | | ShieldGemma 2B | 0.874 | 0.601 | 0.710 |
 | | | toxic-bert | **0.973** | **0.846** | **0.899** (trained on this data) |
-| YouTube | spam | **jevmod** | **0.994** | 0.534 | **0.962** (0.15) |
+| YouTube | spam | **jevmod** | **0.994** | 0.507 | **0.958** (0.20) |
 | | | Llama Guard 3 8B | 0.500 | 0.000 | no spam category |
 | | | ShieldGemma 2B | | | no spam category |
 | | | toxic-bert | | | no spam category |
-| Discord scam | scam | jevmod | 0.980 | 0.651 | 0.833 (0.25) |
-| Discord scam | spam | jevmod | 0.980 | 0.758 | 0.860 (0.40) |
+| Discord scam | scam | jevmod | 0.980 | 0.651 | 0.833 (0.25), measured 2026-09-20 and not re-run |
+| Discord scam | spam | jevmod | 0.980 | 0.758 | 0.860 (0.40), measured 2026-09-20 and not re-run |
 
 No other system was run on the Discord set: none of the three open models has a scam/phishing category, and this
 addition is about the register, not a new head-to-head. F1 @ default uses jevmod's shipped thresholds (scam 0.75,
@@ -79,10 +85,16 @@ Reading it:
 - On the serious categories (OpenAI's human-labelled set) jevmod has the best ranking quality in every category:
   harassment 0.93, sexual 0.98, self-harm 0.99, minors 0.98. Llama Guard is the closest open model on
   "flagged at all" and on self-harm at its own threshold.
-- jevmod's shipped thresholds are conservative: self-harm at 0.80 misses cases that a 0.35 threshold would catch
-  (F1 0.71 → 0.79); minors at 0.70 has recall 0.41 because OpenAI's label also covers *discussion* of child abuse,
-  while jevmod's question asks about sexualisation or grooming. The ❌/✅ feedback loop in the bots and the
-  `PUT /v1/policy` endpoint exist to move those lines per community.
+- jevmod's shipped thresholds are conservative, and one of them stopped being so. Self-harm shipped at 0.80 when
+  this file was written and ships at 0.50 now, because JEV-59 measured its best-F1 line at 0.51 and decided a
+  missed self-harm message costs fifty times what a false positive does. The 0.766 above is at 0.50; at the old
+  0.80 the same data gives 0.714, which is what earlier versions of this table reported. Minors at 0.70 still has
+  recall 0.45, because OpenAI's label also covers *discussion* of child abuse while jevmod's question asks about
+  sexualisation or grooming. `PUT /v1/policy` exists to move those lines per community. The buttons under a flag
+  in the Discord bot used to move them on their own, by +0.03 or −0.02 a press; they now record the human's
+  verdict and change nothing, because `benchmark/nudge_loop.py` measured that at a realistic 2% spam rate that
+  loop has no equilibrium: the line ratchets to 0.99, nothing scores that high, the category stops flagging and
+  nobody is told.
 - toxic-bert wins Civil Comments because it was trained on Civil Comments. On text it has not seen (OpenAI's set)
   it is the weakest of the four.
 - Spam: only jevmod has a spam category. Its ranking is near perfect (0.994) but the shipped threshold of 0.85 is
@@ -101,7 +113,7 @@ Reading it:
 
 | system | cost per 1,000 messages | latency per message | needs |
 |---|---|---|---|
-| jevmod (Jev, 7 categories) | **$0.042** (2.5 M input tokens for 2,504 messages, list price $0.042/M) | 22 ms amortised in batches of 25 (about 550 ms per request) | an API key |
+| jevmod (Jev, 7 categories) | **$0.044** (2.6 M input tokens for 2,504 messages, list price $0.042/M) | 19 ms amortised in batches of 25 (about 480 ms per request) | an API key |
 | Llama Guard 3 8B Q4 | $0.004 in GPU time at $0.30/h | 49 ms | a 16 GB GPU, 5 GB of weights |
 | ShieldGemma 2B Q8 | $0.011 in GPU time | 130 ms (4 calls) | a GPU, 3 GB |
 | toxic-bert | $0.0006 in GPU time | 8 ms | a GPU or a CPU |
@@ -178,3 +190,73 @@ line the operator chose. An operator who wants a hard line should set it further
   is loose — e.g. "I think someone is pretending to be you and scammed me" is a message *about* being scammed,
   labelled scam anyway. The set comes from one author's gaming communities (11k members, ≈80k raw messages before
   filtering to these 2,000); it is not a random sample of Discord.
+
+## Re-measured, and what it settled
+
+The jevmod rows above were measured on 2026-09-18. Two things changed under them afterwards, and no test noticed
+either:
+
+- **`judge()` stopped putting real messages at `messages.m0`.** `benchmark/position_zero.py` measured, on 300
+  messages, that a message at index zero gains +0.014 from its neighbours where every other position gains about
+  0.22, and that the cost is asymmetric: spam positives lose 0.15 there while clean text moves 0.01. The
+  2026-09-18 run therefore had one message in every twenty-five silently judged in isolation.
+- **A batch of 25 is the favourable end of a curve.** `BATCH_EFFECT.md` section 7 measured spam recall at 17.3%
+  with one message per request, 32.0% at five, 38.7% at ten and 37.3% at twenty-five.
+
+So the published numbers came from a configuration the project had since shown was both slightly broken and
+measured at its best. Re-run on 2026-09-23, four times, about $0.40 in total:
+
+| run | what it is |
+|---|---|
+| `jevmod.jsonl` | the 2026-09-18 original, kept rather than overwritten: it is the only copy of what the published claims came from |
+| `jevmod_v2.jsonl` | the current engine, still scoring the eight categories the old runner asked for |
+| `jevmod_v3.jsonl` | v2 again with nothing changed, because without a repeat-run control a difference of 0.03 cannot be told apart from Jev answering twice |
+| `jevmod_v4.jsonl` | the shipped configuration: only the categories that are on. **This is the table above.** |
+
+**Every published AUROC holds.** These are the numbers the README states, at the precision it states them:
+
+| category | 2026-09-18 | v2 | v3 (control) | v4 (shipped) | README says |
+|---|---|---|---|---|---|
+| harassment | 0.930 | 0.931 | 0.930 | 0.930 | 0.93 |
+| nsfw | 0.982 | 0.983 | 0.984 | 0.984 | 0.98 |
+| selfharm | 0.992 | 0.992 | 0.993 | 0.992 | 0.99 |
+| minors | 0.977 | 0.978 | 0.979 | 0.978 | 0.98 |
+| spam (YouTube) | 0.994 | 0.994 | 0.994 | 0.994 | 0.994 |
+| any violation | 0.939 | 0.940 | 0.941 | 0.940 | not stated |
+
+Repeat-run noise on AUROC is 0.001 or less, so these are not merely within tolerance, they are the same number.
+That is what being threshold-free buys: the thing that changed moves scores, and ranking does not care.
+
+**F1 at the shipped threshold moved, in both directions, and within about twice the noise.** v3 against v2 with
+nothing changed gives the floor: ΔF1 of 0.012 on spam, 0.020 on minors, 0.004 on harassment. Against that floor,
+minors gained about 0.03 and YouTube spam lost about 0.03. Both are real but small, and one replicate per
+condition is not enough to attribute either to the filler rather than to the day.
+
+What the spam direction is *not* is a contradiction of `BATCH_EFFECT.md`. That measurement moved a message from a
+request of one to a request of ten, where the filler takes it off index zero entirely. Here the batch is 25, so
+the filler helps one message in twenty-five and shifts the other twenty-four by one position. The honest reading
+is that the filler is worth a great deal to a caller judging one message at a time and worth nothing at batch 25.
+That is the shape you would expect, and neither the old rows nor the new ones claimed otherwise.
+
+**Three numbers kept by hand turned up while doing this, and all three were wrong.**
+
+`report.py` held a literal dict of thresholds, and it had drifted: `selfharm: 0.8` while the engine has shipped
+0.5 since JEV-59. The published table was scoring self-harm at a line the product does not use. It now reads
+`DEFAULT_THRESHOLDS` from `jevmod.core.policy`, which is why self-harm reads 0.766 above and not the 0.714
+earlier versions of this file reported: same data, correct threshold.
+
+"Flagged at all" was `max(scores.values())` — the maximum over whatever the runner happened to score rather than
+over the categories that are on. `ai_generated` was added after the published run, ships off, and so appeared in
+the re-run only and swept straight into `any`. On the first comparison, openai_moderation `any` precision read
+0.65 against the old file and 0.50 against the new one with recall unchanged. That looks exactly like the engine
+getting worse, and the explanation for why it had got worse was already written down before anyone measured it.
+It was a category nobody had turned on. `any` is now the maximum over enabled categories.
+
+`run_jevmod.py` excluded `offtopic` by name, which meant it scored `ai_generated` too. That is 26% on the
+measured cost per thousand messages that no user pays, and it is where the $0.053 an intermediate version of this
+file briefly reported came from. It now reads the default actions, so the next category added is handled by
+whatever its own default says. The shipped figure is $0.044 against the $0.042 published, and that 3.6% is the
+filler: one extra position in every request of twenty-five.
+
+Not re-run, and therefore not settled by any of this: the Discord set, whose data is not committed and whose
+rows are marked in the table above.

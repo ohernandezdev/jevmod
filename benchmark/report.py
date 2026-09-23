@@ -9,13 +9,25 @@ Cost: Jev at list price from measured tokens; local models at an RTX 5080's elec
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from jevmod.core.policy import DEFAULT_THRESHOLDS  # noqa: E402
 
 R = Path(__file__).parent / "results"
 DATA = Path(__file__).parent / "data" / "items.jsonl"
 JEV_USD_PER_M = 0.042
 GPU_USD_PER_H = 0.30
-DEFAULT = {"spam": 0.85, "harassment": 0.75, "nsfw": 0.8, "selfharm": 0.8, "doxxing": 0.8, "minors": 0.7, "scam": 0.75}
+
+# Read from the engine, not copied. This was a literal dict, and it had already drifted: it said
+# `selfharm: 0.8` while `policy.py` ships 0.5 since JEV-59 measured that category's best-F1 line at
+# 0.51. The published table was therefore scoring a threshold the product does not use, which is
+# exactly the kind of number JEV-40 spent a day removing from the website.
+#
+# `offtopic` is left out because `run_jevmod.py` does not ask for it, and `ai_generated` because it
+# ships off. A category the runner never scored has no column to fill.
+DEFAULT = {c: t for c, t in DEFAULT_THRESHOLDS.items() if c not in ("offtopic", "ai_generated", "rule")}
 
 
 def load(name: str) -> dict[str, dict]:
@@ -51,8 +63,17 @@ def best_f1(pairs: list[tuple[float, int]]) -> tuple[float, float]:
 
 
 def main() -> None:
+    # Which jevmod run to table. `results/jevmod.jsonl` is the 2026-09-18 measurement the published
+    # figures came from, taken before `judge()` put a filler at `messages.m0`; re-running under a new
+    # name and tabling it with this argument is how the published numbers get rechecked without
+    # overwriting the only copy of what they were derived from. The other three systems are local
+    # models whose results do not move, so they keep their names.
+    jev_name = sys.argv[1] if len(sys.argv) > 1 else "jevmod"
     items = {json.loads(line)["id"]: json.loads(line) for line in DATA.open(encoding="utf-8")}
-    jev, lg, sg, tb = load("jevmod"), load("llamaguard"), load("shieldgemma"), load("toxicbert")
+    jev, lg, sg, tb = load(jev_name), load("llamaguard"), load("shieldgemma"), load("toxicbert")
+    if not jev:
+        print(f"report: results/{jev_name}.jsonl is missing or empty")
+        raise SystemExit(2)
     systems: dict[str, dict[str, dict[str, float]]] = {
         "jevmod": {},
         "llamaguard": {},
@@ -80,8 +101,15 @@ def main() -> None:
             "nsfw": s.get("obscene", 0),
             "any": s.get("toxic", 0),
         }
-    for i, r in jev.items():
-        systems["jevmod"][i]["any"] = max(systems["jevmod"][i].values()) if systems["jevmod"][i] else 0.0
+    # "Flagged at all" is the max over the categories that are **on**, not over whatever the runner
+    # happened to score. It was `max(scores.values())`, and that broke the moment a category was
+    # added: `ai_generated` arrived after the published run, ships off by default, and swept into
+    # `any` for the re-run only. openai_moderation's `any` precision read 0.65 against the old file
+    # and 0.50 against the new one with recall unchanged, which looked exactly like the engine
+    # getting worse and was a category nobody had turned on.
+    for i in jev:
+        on = [v for c, v in systems["jevmod"][i].items() if c in DEFAULT]
+        systems["jevmod"][i]["any"] = max(on) if on else 0.0
 
     rows = []
     for source in ("openai_moderation", "civil_comments", "youtube_spam"):
