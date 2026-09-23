@@ -13,7 +13,7 @@ Three things, in the order they matter.
    pornography link-farm pages labelled `nsfw`. Flagging those as spam is correct and is scored as
    an error. All 166 false negatives are YouTube self-promotion. Spam F1 of 0.363 on this set is not
    a fact about jevmod.
-2. **Turning the context engine on changes the numbers by nothing and the verdicts by 114.** AUROC
+2. **Turning the context engine on changes the numbers by nothing and 124 verdicts on 122 messages.** AUROC
    moves at most 0.002 in any category. That is the risk answer for what JEV-17 shipped on by
    default, and it is reassuring. It is not evidence that context helps, because this set has no
    conversations in it.
@@ -42,8 +42,11 @@ convenience. Finding 1 above is invisible in a count and obvious in four lines o
 | selfharm | **+0.066** | +0.020 | +0.033 | −0.000 | 9 |
 | spam | +0.012 | +0.004 | +0.008 | +0.002 | 50 |
 
-The quality is the same either way. The verdicts are not: 114 messages are flagged by one run and
-not the other, which is the number a server owner would notice and the one the metric columns hide.
+The quality is the same either way. The verdicts are not: counting every category the runs scored,
+**124 category-level verdicts change across 122 messages**. The column above sums to 114 because it
+covers only the five categories this set labels; an earlier version of this paragraph called that
+114 "messages", which it was not. It is the number a server owner would notice either way, and the
+one the metric columns hide.
 That is the same shape as `BATCH_EFFECT.md`: aggregates survive, individual verdicts do not.
 
 The one column worth looking at is `selfharm` precision, +0.066, three false positives down to one.
