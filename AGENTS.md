@@ -9,7 +9,7 @@ model) in one request and each message comes back with a probability per categor
 `harassment`, `nsfw`, `offtopic`, `selfharm`, `doxxing`, `minors`) and per plain-language rule.
 A `Policy` turns probabilities into an action (`none`, `flag`, `delete`, `timeout`); flag-only by
 default, fail-open when Jev is unreachable. The same core serves a Python SDK, a CLI, an HTTP API,
-an MCP server and the Discord, Telegram and Reddit bots.
+an MCP server and the Discord, Telegram, Reddit, Twitch and YouTube bots.
 
 ## APIs, exact signatures
 
