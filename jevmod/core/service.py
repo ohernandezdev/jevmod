@@ -18,7 +18,7 @@ from typing import Any
 
 from typesafe_sdk import TypeSafeError
 
-from ..judge import Judge, Message
+from ..judge import PAD_TO, Judge, Message
 from . import local
 from .context import ConversationBuffer, assemble
 from .local import RepeatWindow
@@ -31,6 +31,22 @@ JEV_USD_PER_M_INPUT = 0.042
 # The most one check-then-spend window may commit. A quota is checked before a batch and written
 # after it, so a batch bigger than this is a ceiling overshot by exactly that much.
 MAX_BATCH = int(os.environ.get("JEVMOD_MAX_BATCH", "100") or 100)
+
+# Pad a small batch with recent messages from the same channel so a quiet server is not moderated
+# worse than a busy one. On by default, and the reason is that the alternative is not moderation:
+# spam recall at the shipped threshold is 17.3% when a message is judged alone and 38.7% in a
+# request of ten (`benchmark/BATCH_EFFECT.md` section 7), and `Batcher` sizes a batch by how busy
+# the channel is, so which of those a server gets is decided by its traffic.
+#
+# It costs about eight times the model spend for the messages that get padded, and only those: a
+# busy channel already fills its own request and pays nothing extra. At $0.042/M input that is
+# $0.51 per thousand judged messages against $0.06, so a quiet server at a thousand messages a
+# month goes from six cents to fifty against a $3.99 plan.
+#
+# `JEVMOD_PAD_BATCH=0` buys the cheaper version back. What it trades away is twenty-one points of
+# spam recall, which is why the number is written here next to the switch rather than in a
+# changelog nobody reads.
+PAD_BATCH = (os.environ.get("JEVMOD_PAD_BATCH", "1") or "1").lower() not in ("0", "false", "no")
 # Whether plans mean anything here, and the plan a tenant sits on when nothing is paying for it. Both are
 # defined in `store` so that the gate and the quota that enforce them cannot drift apart.
 
@@ -163,8 +179,26 @@ class ModerationService:
         j = self.judge
         before = (j.requests, j.input_tokens, j.judged_messages)
         t0 = time.perf_counter()
+        # Padding is drawn from the same window the context comes from, so a message's cache key
+        # already varies with it: `_key` hashes `m.context`, and both are this channel's recent
+        # history. There is nothing to add to the key here.
+        #
+        # Only when the whole batch is one conversation. `Batcher` groups by tenant, and a Discord
+        # guild's two seconds can hold #general and #support at once; padding such a batch from one
+        # of them would be picking a channel arbitrarily and calling it context. A batch that spans
+        # channels is also several conversations' worth of messages already, which is the thing
+        # padding exists to supply.
+        padding: tuple[str, ...] = ()
+        channels = {m.channel for m in messages}
+        if PAD_BATCH and len(messages) < PAD_TO and len(channels) == 1:
+            # The batch is already in the buffer by now, because `moderate` writes it before any of
+            # this runs. Its own texts are filtered out here rather than left for `judge` to drop,
+            # so what this function passes is what it means: the history, not the present.
+            own = {m.text for m in messages}
+            window = self.context.window_for(self._channel_key(tenant, messages[0]))
+            padding = tuple(text for text in window if text not in own)
         try:
-            verdicts = j.judge(messages, policy.enabled_categories(), policy.rules)
+            verdicts = j.judge(messages, policy.enabled_categories(), policy.rules, padding)
         except TypeSafeError as exc:
             log.warning(
                 {"event": "judge_error", "tenant": tenant, "rid": rid, "error": f"{type(exc).__name__}: {exc}"[:200]}

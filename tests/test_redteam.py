@@ -92,6 +92,14 @@ def score_block(block: str, policy: Policy) -> tuple[int, int, int, list[str]]:
             # not catching it is not a miss. `g4` is the case that forced this: a link to the CPython repo in
             # a gaming channel is genuinely off-topic, so `offtopic` fires on about one run in six, and a
             # budget of zero false positives turned an honest reading into a failing test.
+            #
+            # `f17` joined it on 2026-09-23, and it is the same situation in a mirror. A chicken recipe in a
+            # gaming channel is genuinely off-topic, and measured in its own chunk over eight runs it scores
+            # a mean of 0.899 against a threshold of 0.90, below the line three times in eight. The CSV's own
+            # recorded value for it is 0.56. It was passing on the luck of which messages shared its chunk,
+            # not on a margin, and JEV-56 measured exactly how much that luck is worth: regrouping a batch
+            # moves 12% of messages across their threshold. A required catch that lands on the threshold is
+            # asserting a precision the score does not have.
             raw = set(r["expected"].split("|")) - {"clean"}
             tolerated = {e[1:] for e in raw if e.startswith("?")}
             tolerated = {e if e in CATS else f"rule:{e}" for e in tolerated}

@@ -22,7 +22,7 @@ class _CountingJudge:
         self.input_tokens = 0
         self.judged_messages = 0
 
-    def judge(self, messages, categories, custom_rules=None):
+    def judge(self, messages, categories, custom_rules=None, padding=()):
         self.seen_texts.extend(m.text for m in messages)
         self.judged_messages += len(messages)
         return [Verdict(m.id, {}, True, "jev") for m in messages]

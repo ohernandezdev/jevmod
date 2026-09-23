@@ -39,6 +39,18 @@ CATEGORIES: dict[str, dict[str, Any]] = json.loads(
     (Path(__file__).with_name("categories.json")).read_text(encoding="utf-8")
 )["categories"]
 
+# How many messages a padded request holds in total. Measured, not chosen: spam recall at the
+# shipped threshold is 17.3% with one message in the request, 32.0% with five, 38.7% with ten and
+# 37.3% with twenty-five (`benchmark/BATCH_EFFECT.md` section 7, on 300 real messages). It saturates
+# at ten, and twenty-five costs 2.5 times more per judged message to get slightly less. Changing
+# this number means re-running `benchmark/batch_effect.py`, not arguing about it.
+PAD_TO = 10
+
+# What sits at `messages.m0` when the channel has no recent history to put there. Deliberately
+# ordinary: a sentence no moderator would ever act on, in the register a chat channel is in, and
+# short enough that paying for it is not the point. It is never judged and never returned.
+LEAD_FILLER = "hey everyone, how is it going today"
+
 LINK_RE = re.compile(
     r"(https?://|hxxps?://|www\.|\S+\[\.\]\S+|\b[\w-]+\.(?:gg|com|net|org|ru|io|xyz|fr|de|jp|br)\b/?)", re.I
 )
@@ -128,8 +140,24 @@ class Judge:
         messages: list[Message],
         categories: list[str],
         custom_rules: dict[str, str] | None = None,
+        padding: tuple[str, ...] = (),
     ) -> list[Verdict]:
-        """One Jev request for every message that passes the pre-filter and is not cached."""
+        """One Jev request for every message that passes the pre-filter and is not cached.
+
+        `padding` is text that rides along in the request, is asked the same questions, and whose
+        answers are thrown away. It exists because the size of the batch changes the answers: the
+        same spam message reaches 17.3% recall judged alone and 38.7% in a batch of ten, measured in
+        `benchmark/BATCH_EFFECT.md` section 7, and `Batcher` sizes a batch by how busy the server is.
+        Without padding a quiet channel is moderated worse than a busy one and nobody is told.
+
+        The padding has to be *asked about* and not merely present: neighbours in the state with no
+        question pointed at them recover only 23% of the gap (`benchmark/batch_context.py`). That is
+        why this costs a real request's worth of tokens rather than a few.
+
+        The discard lives here rather than in the caller on purpose. An invariant kept by whoever
+        remembers to keep it is one that eventually is not kept, so no padded text can reach a
+        verdict, a cache entry or `judged_messages` by any path through this method.
+        """
         custom_rules = custom_rules or {}
         cats = [c for c in categories if c in CATEGORIES]
         out: dict[str, Verdict] = {}
@@ -167,12 +195,32 @@ class Judge:
                         # Jev in exactly the shape it did before this existed.
                         **({"context": {f"c{j}": c for j, c in enumerate(m.context)}} if m.context else {}),
                     }
-                    for i, (m, text) in enumerate(to_judge)
+                    # Real messages start at m1. m0 is filled below and is never one of them.
+                    for i, (m, text) in enumerate(to_judge, start=1)
                 },
                 "custom_rules": custom_rules,
             }
+            topic = to_judge[0][0].channel_topic or "general chat"
+            # Padding, deduplicated, normalised so it cannot smuggle in text the pre-filter would
+            # have cleaned, and with anything already being judged removed: the buffer holds the
+            # batch by the time the batch is judged.
+            judged_texts = {t for _, t in to_judge}
+            pad = [p for p in dict.fromkeys(normalize(p) for p in padding) if p and p not in judged_texts]
+            # m0 is never a real message, and that is the whole of this. Measured on 300 messages in
+            # `benchmark/position_zero.py`: a message at m0 gains nothing from its neighbours
+            # (+0.014 in a request of ten) while every other position gains about 0.22, and the cost
+            # is asymmetric, spam positives losing 0.15 there while clean text moves 0.01. Index zero
+            # costs recall and buys no precision. A message judged by itself is always at m0, which
+            # turned out to be the entire "batch size" effect JEV-57 was opened on.
+            #
+            # Recent history is preferred over the constant because it is real text from this
+            # channel and costs nothing extra to have; the constant is the fallback for a channel
+            # with no history yet.
+            state["messages"]["m0"] = {"text": pad.pop(0) if pad else LEAD_FILLER, "channel_topic": topic}
+            for k, text in enumerate(pad[: max(0, PAD_TO - len(to_judge) - 1)]):
+                state["messages"][f"m{len(to_judge) + 1 + k}"] = {"text": text, "channel_topic": topic}
             questions: dict[str, Noul] = {}
-            for i, _ in enumerate(to_judge):
+            for i in range(len(state["messages"])):
                 path = f"messages.m{i}"
                 for c in cats:
                     questions[f"{c}_{i}"] = Noul(
@@ -191,7 +239,8 @@ class Judge:
             self.requests += 1
             self.input_tokens += getattr(getattr(resp, "usage", None), "input_tokens", 0) or 0
             self.judged_messages += len(to_judge)
-            for i, (m, text) in enumerate(to_judge):
+            # Offset by one: the real messages start at m1 because m0 holds the lead filler.
+            for i, (m, text) in enumerate(to_judge, start=1):
                 scores = {c: _p(resp.answers[f"{c}_{i}"]) for c in cats}
                 custom = {name: _p(resp.answers[f"custom__{name}_{i}"]) for name in custom_rules}
                 self.cache[_key(text, m.channel_topic, cats, custom_rules, m.context)] = (now, scores, custom)
