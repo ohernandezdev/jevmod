@@ -1,7 +1,7 @@
 # Does a message's score depend on its batch? Spam and harassment, measured.
 
 Run on 2026-09-22 and 2026-09-23 against the live TypeSafe API from `benchmark/batch_effect.py`. 600
-messages, ten conditions, 4,800 judgements, 822 requests, 6.0M input tokens, **$0.25**. Raw results are committed
+messages, ten conditions, 5,100 judgements, 1,122 requests, 6.5M input tokens, **$0.27**. Raw results are committed
 at `benchmark/results/batch_effect.jsonl`, so every table below recomputes for free.
 
 JEV-56. `ai_detect/REPORT2.md` measured this for `ai_generated` and then asserted, without measuring
@@ -335,6 +335,29 @@ The repeated-identical-batch control is not perfectly unbiased: `pure2` scores h
 70 messages and lower on 20, p = 0.000, a systematic +0.007. That is a twenty-seventh of the batch
 effect and does not change any conclusion here, but "a repeated request is deterministic" is not
 quite true and should not be written as though it were.
+
+## 8. The published harassment figure survives
+
+The site publishes one recall number, `harassmentRecall: 78`, and section 7 could not speak for it:
+the single-message arms ran the spam pools, where harassment sits near zero and has nothing to move.
+So the harassment pools were asked one message at a time as well.
+
+| messages per request | mean, positives | mean, clean | recall@0.75 | FPR@0.75 |
+|---|---|---|---|---|
+| 1 | 0.800 | 0.199 | **76.7%** | 11.3% |
+| 25 | 0.773 | 0.185 | **72.0%** | 7.3% |
+
+**The published 78 holds**, between 72% and 77% across batch sizes. And the shift runs the other way
+from spam: 90 of 150 harassment positives score *lower* batched, median −0.010, against spam's
++0.19. Batching costs harassment nothing and buys it a little precision, 11.3% false positives down
+to 7.3%.
+
+This is the same split as everywhere else in this report. Spam asks what is normal here and needs a
+stream to answer. Harassment asks whether this sentence is abusive and does not.
+
+So the site's aggregate figure is honest and needs no correction. What the site does owe a reader is
+in `odd/tasks/batch-composition-spam-harassment.md` T6b: it presents a single message's score to two
+decimal places, and that is the precision this whole report says the number does not have.
 
 ## What to do
 

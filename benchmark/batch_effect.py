@@ -100,7 +100,8 @@ REORDER_SEED = 5600   # a different order inside each batch, not a different bat
 MIX_SEED = 5656       # randomises membership of the mixed arm to reshuffled's level
 PER_POOL = 150
 CONDITIONS = ("pure", "pure2", "reordered", "reshuffled", "mixed", "mixed_shuffled",
-              "single", "single2", "batch5", "batch10")
+              "single", "single2", "batch5", "batch10",
+              "single_h")
 
 
 def _items() -> list[dict]:
@@ -175,6 +176,11 @@ def batches(condition: str) -> list[list[dict]]:
         n = int(condition[5:])
         items = p["spam"] + p["clean_vs_spam"]
         return [items[i : i + n] for i in range(0, len(items), n)]
+    if condition == "single_h":
+        # The harassment arm of `single`, added because the site publishes a harassment recall figure
+        # and the spam arms cannot speak for it: they scored harassment on spam and clean messages,
+        # where it sits near zero and has nothing to move.
+        return [[it] for it in p["harassment"] + p["clean_vs_harassment"]]
     if condition in ("single", "single2"):
         # One message per request. The spam arm only: 300 requests per run, against 12 for a batched
         # condition, so running all four pools would quadruple the wall clock to answer a question
