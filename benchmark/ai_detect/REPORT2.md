@@ -24,10 +24,18 @@ slightly worse.
 
 ## 1. Batch composition moves the score
 
-156 human texts, asked three times: once in all-human batches, once again in all-human batches (plain
-run-to-run noise, the control's control), and once in 50/50 batches next to AI text.
+156 human texts, asked three times: once in all-human batches, once again in all-human batches, and
+once in 50/50 batches next to AI text.
 
-| stratum | n | p, all-human | p, re-asked | p, 50/50 batch | rerun drift | composition drift |
+> **Corrected 2026-09-22.** The middle column was described below as "plain run-to-run noise" and as
+> "nothing changed at all". It is neither. `cmd_ask_retest` calls `rng.shuffle(sample)` before it
+> chunks (`deterministic.py:618`), so the re-ask held the batch *composition* constant and regrouped
+> the *membership*. It is a regrouping measurement, not a repetition. A genuinely byte-identical
+> repeat was never run here; it was run in `benchmark/BATCH_EFFECT.md` and flips 2.7% of spam
+> positives, against the 11% below. The two agree once the middle column is read correctly: that
+> report's regrouping arm flips 12%.
+
+| stratum | n | p, all-human | p, regrouped | p, 50/50 batch | regrouping drift | composition drift |
 |---|---|---|---|---|---|---|
 | hc3_human_wiki_csai | 60 | 0.812 | 0.802 | 0.848 | -0.010 | **+0.046** |
 | hc3_human_medicine | 10 | 0.545 | 0.491 | 0.432 | -0.054 | -0.059 |
@@ -41,19 +49,41 @@ cancel for the people affected:
 | condition | FPR@0.85 all | FPR@0.85 wiki-style | items flipping across 0.85 |
 |---|---|---|---|
 | all-human batch | 0.115 | 0.300 | 0/156 |
-| re-asked, all-human | 0.096 | 0.250 | **17/156** |
+| regrouped, all-human | 0.096 | 0.250 | **17/156** |
 | 50/50 batch | **0.256** | **0.667** | **24/156** |
 
 Two readings, both bad:
 
 - **Composition:** putting the same encyclopedic human paragraph in a batch that also contains AI text
   more than doubles its false-positive rate, 0.300 to 0.667.
-- **Plain rerun:** even with the batch composition held constant, asking twice flips 17 of 156 items
-  across the threshold. That is 11% instability with nothing changed at all.
+- **Regrouping:** with the batch composition held constant and only the membership regrouped, asking
+  again flips 17 of 156 items across the threshold. That is 11% instability without changing what any
+  batch is made of. (This bullet said "with nothing changed at all" until 2026-09-22; see the
+  correction above.)
 
-This was measured for `ai_generated`. **It is a property of the batching contract, not of the category**,
-so it applies to spam, scam and harassment too, where it is unmeasured and where the action is delete
-rather than flag. That is the finding worth carrying out of this whole exercise.
+This was measured for `ai_generated`. **It is a property of the batching contract, not of the
+category**, so it should apply to spam, scam and harassment too, where the action is delete rather
+than flag. That is the finding worth carrying out of this whole exercise.
+
+**Measured for spam and harassment on 2026-09-22**, in `benchmark/BATCH_EFFECT.md`. The prediction
+holds and the reason given for it does not:
+
+- Regrouping moves 12% of spam positives across 0.85 against 2.7% for a repeated request, the one
+  result there that survives correction for multiple comparisons.
+- **Composition does nothing.** With neighbours randomised to chance in both arms, an all-spam batch
+  and a half-clean batch flip the same messages, 18 against 18, p = 1.000 in all four cells. The
+  first bullet above, the doubling of the wiki-style false-positive rate, does not reproduce outside
+  `ai_generated`: what matters is *which* messages share the batch, not *what* they are.
+- Harassment is not settled and cannot be with this dataset: 60% power using all 319 harassment
+  messages in `items.jsonl`.
+
+**The composition finding above survives for `ai_generated`, and the contrast is the interesting
+part.** The regrouped column is the membership-only control this section always had: it moved the
+wiki-style false-positive rate from 0.300 to 0.250, which is nothing, while the 50/50 arm moved it to
+0.667. So for this question composition really does carry the effect. For spam and harassment it
+carries none of it. The likely reason is the one REPORT3 section 3 already noticed: `ai_generated`
+asks *who wrote this*, and a batch full of machine text is genuine evidence about the world for that
+question. Spam asks *what is this text*, and a neighbour is not evidence either way.
 
 ## 2. At a realistic AI rate, the numbers collapse
 

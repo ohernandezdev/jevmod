@@ -110,6 +110,9 @@ What is still not measured, and cannot be until someone labels slop directly:
   Newer models asked to sound casual are untested, and so is text run through a humanizer.
 - **The other categories.** The batching instability is smaller here but it is the same mechanism, and
   spam and harassment remain unmeasured. They delete messages. That is still the more important work.
+  **Done on 2026-09-22: `benchmark/BATCH_EFFECT.md`.** Spam behaves the same way and the cause is not
+  what these reports assumed: regrouping the batch matters, what the neighbours *are* does not.
+  Harassment could not be settled, for want of labelled messages rather than for want of a run.
 
 ## Reproduce
 

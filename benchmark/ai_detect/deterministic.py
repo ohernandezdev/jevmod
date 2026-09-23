@@ -613,7 +613,13 @@ def cmd_ask_control() -> None:
 
 
 def cmd_ask_retest() -> None:
-    """Re-ask the same 156 in all-human batches again: plain run-to-run noise, the control's control."""
+    """Re-ask the same 156 in all-human batches again, REGROUPED: the `rng.shuffle(sample)` below puts
+    them in different batches of 25. That makes this a membership control, not a repetition control.
+
+    REPORT2 called it "plain run-to-run noise" and read its 17/156 as instability "with nothing changed
+    at all". It is not: what changed is which messages share a batch. A byte-identical repeat was never
+    run here; `benchmark/batch_effect.py` runs one, and it flips 2.7% against this arm's 11%. Corrected
+    2026-09-22, see the note at the top of REPORT2.md section 1."""
     rng = random.Random(4242)
     ti = {i["id"]: i for i in load_items(TRAP)}
     sample = _control_sample()
@@ -653,7 +659,8 @@ def cmd_composition() -> None:
     )
     ids = [i for i in ret if i in pure and i in ctrl]
     print(f"## Batch composition moves the score, n={len(ids)} human texts asked three times\n")
-    print("| stratum | n | p, all-human batch | p, re-asked all-human | p, 50/50 batch | rerun drift | composition drift |")
+    print("| stratum | n | p, all-human batch | p, regrouped all-human | p, 50/50 batch "
+          "| regrouping drift | composition drift |")
     print("|---|---|---|---|---|---|---|")
     for s in sorted({ti[i]["stratum"] for i in ids}) + ["ALL"]:
         sub = [i for i in ids if s == "ALL" or ti[i]["stratum"] == s]
@@ -664,7 +671,7 @@ def cmd_composition() -> None:
     print("\n| condition | FPR@0.85 all | FPR@0.85 wiki-style | FPR@0.90 all | items flipping across 0.85 |")
     print("|---|---|---|---|---|")
     w = [i for i in ids if ti[i]["stratum"] == "hc3_human_wiki_csai"]
-    for name, sc in (("all-human batch", pure), ("re-asked, all-human", ret), ("50/50 batch", ctrl)):
+    for name, sc in (("all-human batch", pure), ("regrouped, all-human", ret), ("50/50 batch", ctrl)):
         flip = sum(1 for i in ids if (pure[i] >= 0.85) != (sc[i] >= 0.85))
         print(
             f"| {name} | {sum(1 for i in ids if sc[i] >= 0.85) / len(ids):.3f} | "

@@ -109,10 +109,22 @@ red-team suite calls Jev about a hundred times; expect a minute and a few cents.
 
 - `ruff check .` and `mypy jevmod` clean before any commit. Line length 120, Python 3.10 syntax.
 - Real tests against Jev, no mocks of the TypeSafe client. Offline tests are for pure code
-  (`Policy`, `Store`, pre-filters). Assert against thresholds with margin, never exact values:
-  Jev's probabilities move about plus or minus 0.03 between runs.
+  (`Policy`, `Store`, pre-filters). Assert against thresholds with margin, never exact values.
+  **How much margin depends on whether the request repeats exactly**, measured in
+  `benchmark/BATCH_EFFECT.md` on 2026-09-22 and not the plus or minus 0.03 this file used to
+  claim for every case:
+  - The same request sent again moves the mean score by 0.004 to 0.011, but the tail reaches
+    0.11, and 9% to 12% of the messages that score in the middle move further than 0.03.
+  - A test that batches differently, which is what almost every test does, is a different
+    request. There the p95 is 0.15 to 0.20 and the maximum 0.55.
+  - So: assert a category and a direction, or a margin of 0.2, not 0.03. A test that batches
+    its own fixtures alongside anything else is asserting on a number that moves by a fifth.
 - The Jev state is a dict keyed by position (`messages.m3.text`), never a list. Lists leaked
-  probabilities between neighbours in multilingual batches.
+  probabilities between neighbours in multilingual batches. That fixed the leak and did not fix
+  the coupling: regrouping the same messages into different batches of 25 still moves 12% of
+  spam positives across their threshold, against 2.7% for a repeated request. Position alone is
+  not the cause; membership is. `benchmark/BATCH_EFFECT.md` has the measurement, and JEV-56 is
+  where it goes next.
 - Every question carries `criteria` with `true` and `false`. Change questions only in
   `categories.json`, and re-run `tests/test_redteam.py`.
 - `selfharm` stays flag-only. `offtopic` stays off by default.
