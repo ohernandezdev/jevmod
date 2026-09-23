@@ -132,6 +132,10 @@ class Store:
                     current_period_end REAL, updated REAL);
                 CREATE TABLE IF NOT EXISTS api_keys (
                     key_hash TEXT PRIMARY KEY, tenant TEXT NOT NULL, created REAL, label TEXT);
+                CREATE TABLE IF NOT EXISTS labels (
+                    ts REAL, tenant TEXT, message TEXT, category TEXT, agreed INTEGER,
+                    scores TEXT, source TEXT);
+                CREATE INDEX IF NOT EXISTS labels_tenant_ts ON labels (tenant, ts);
                 CREATE TABLE IF NOT EXISTS cancellation_queue (
                     subscription_id TEXT PRIMARY KEY, tenant TEXT NOT NULL, requested_at REAL NOT NULL);
                 """
@@ -404,11 +408,67 @@ class Store:
 
     # ---- audit
     def purge_expired(self) -> int:
+        """Decisions only. `labels` is deliberately not swept: see `add_label`."""
         cutoff = time.time() - self.retention_days * 86400
         with self.lock:
             cur = self.db.execute("DELETE FROM decisions WHERE ts < ?", (cutoff,))
             self.db.commit()
             return cur.rowcount
+
+    def decision_for(self, tenant: str, message_id: str) -> dict[str, Any] | None:
+        """The logged decision for one message, so a human verdict can be stored beside the scores
+        that produced it rather than beside the category alone."""
+        with self.lock:
+            row = self.db.execute(
+                "SELECT category, p, action, scores FROM decisions WHERE tenant=? AND message=? "
+                "ORDER BY ts DESC LIMIT 1",
+                (tenant, message_id),
+            ).fetchone()
+        if not row:
+            return None
+        return {"category": row[0], "p": row[1], "action": row[2], "scores": json.loads(row[3])}
+
+    def add_label(self, tenant: str, message_id: str, category: str, agreed: bool,
+                  scores: dict[str, float], source: str) -> None:
+        """A human's verdict on one message, kept as a labelled datapoint. JEV-12.
+
+        **No text and no moderator identity.** Both are deliberate and both cost something.
+
+        Text, because `decisions` rows are purged after `retention_days` and that promise is in the
+        privacy notice. A label pointing at a message whose words are gone in thirty days would not
+        be a dataset. What is stored instead is the scores the model gave, the category, and whether
+        the human agreed, and that is enough to compute precision and recall at *any* threshold for
+        ever without keeping a word anybody wrote. What it cannot do is re-judge the message later
+        with a different prompt, and that is the price: the alternative is a table of everybody's
+        messages kept indefinitely, which is a different product and a different privacy notice.
+
+        Identity, because who clicked is personal data about a second person, the one the privacy
+        notice does not even mention. The dataset does not need it. If rate-limiting one person
+        clicking fifty times ever matters, that is a counter in memory, not a column.
+
+        Not purged with the decision it refers to. That is the point: a thirty day dataset is not a
+        dataset. It holds no personal data to expire, and `delete_tenant` still removes it.
+        """
+        with self.lock:
+            self.db.execute(
+                "INSERT INTO labels VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (time.time(), tenant, message_id, category, 1 if agreed else 0,
+                 json.dumps({k: round(v, 3) for k, v in scores.items()}), source),
+            )
+            self.db.commit()
+
+    def labels(self, tenant: str | None = None, n: int = 1000) -> list[dict[str, Any]]:
+        """The dataset, newest first. `tenant=None` reads every tenant, which is what an export for
+        `benchmark/evaluate.py` wants."""
+        sql = "SELECT ts, tenant, message, category, agreed, scores, source FROM labels"
+        args: tuple[Any, ...] = ()
+        if tenant is not None:
+            sql += " WHERE tenant=?"
+            args = (tenant,)
+        with self.lock:
+            rows = self.db.execute(sql + " ORDER BY ts DESC LIMIT ?", (*args, n)).fetchall()
+        return [{"ts": r[0], "tenant": r[1], "message_id": r[2], "category": r[3],
+                 "agreed": bool(r[4]), "scores": json.loads(r[5]), "source": r[6]} for r in rows]
 
     def delete_user(self, tenant: str, author: str) -> int:
         """Right to erasure for one member of a community."""
