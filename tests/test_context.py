@@ -10,6 +10,7 @@ not in the way, which is not the same as proving it holds.
 import time
 
 import pytest
+from typesafe_sdk import NoulAnswer
 
 from jevmod.core.context import (
     CHARS_PER_TOKEN,
@@ -174,7 +175,7 @@ def test_the_context_reaches_the_request_and_nothing_else_does(tmp_path):
                 channel_topic="support", context=("what came before",))
     with pytest.raises(RuntimeError):
         j.judge([m], ["spam"])
-    sent = captured["state"]["messages"]["m0"]
+    sent = captured["state"]["messages"]["m1"]  # m0 is the lead filler; real messages start at m1
     assert sent["text"] == "the message being judged"
     assert sent["channel_topic"] == "support"
     assert sent["context"] == {"c0": "what came before"}
@@ -194,4 +195,164 @@ def test_a_message_with_no_context_is_sent_exactly_as_it_was_before(tmp_path):
     j = Judge(client=FakeClient(), cache_ttl_s=0)
     with pytest.raises(RuntimeError):
         j.judge([Message("1", "a message with no history")], ["spam"])
-    assert "context" not in captured["state"]["messages"]["m0"]
+    assert "context" not in captured["state"]["messages"]["m1"]
+
+
+# ------------------------------------------------------------------ JEV-57: padding a small batch
+
+
+class _Capture:
+    """A client that records the request and answers every question with the same number, so a test
+    can tell a real verdict from a padded position by which ones come back at all."""
+
+    def __init__(self, value: float = 0.5) -> None:
+        self.state: dict = {}
+        self.questions: dict = {}
+        self.value = value
+
+    def system_one(self, state, questions):
+        self.state, self.questions = state, questions
+
+        class Resp:
+            def __init__(self, qs, v):
+                # A real NoulAnswer: `_p` rejects anything else, and a fake that `_p` would accept
+                # would be a fake of the check rather than of the answer.
+                self.answers = {k: NoulAnswer(noul=v) for k in qs}
+                self.usage = None
+
+        return Resp(questions, self.value)
+
+
+def test_padding_is_asked_about_and_never_answered_for():
+    """The whole mechanism. `benchmark/batch_context.py` measured that neighbours present but not
+    asked about recover 23% of the gap, so the padding has to carry questions; and nothing about it
+    may reach a verdict, which is why the discard lives in `judge` rather than in the caller."""
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=0)
+    out = j.judge([Message("1", "the one real message here")], ["spam"],
+                  padding=("first bit of history", "second bit", "third bit"))
+    assert len(out) == 1 and out[0].message_id == "1"
+    assert len(c.state["messages"]) == 4, "one real message and three padded ones in the request"
+    assert set(c.questions) == {f"spam_{i}" for i in range(4)}, "every position is asked"
+    assert j.judged_messages == 1, "usage counts the real message only"
+
+
+def test_padding_never_exceeds_the_measured_size():
+    from jevmod.judge import PAD_TO
+
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=0)
+    j.judge([Message("1", "the one real message here")], ["spam"],
+            padding=tuple(f"filler number {i}" for i in range(50)))
+    assert len(c.state["messages"]) == PAD_TO
+
+
+def test_padding_carries_no_context_and_no_duplicate_of_a_judged_message():
+    """The buffer holds the batch by the time it is judged, so the window would otherwise hand a
+    message back its own text as padding and tell the model somebody said it twice."""
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=0)
+    j.judge([Message("1", "the one real message here", context=("earlier",))], ["spam"],
+            padding=("the one real message here", "something genuinely else"))
+    texts = [m["text"] for m in c.state["messages"].values()]
+    assert texts.count("the one real message here") == 1
+    # The duplicate is dropped, so the one usable padding item becomes the lead at m0 and the real
+    # message sits at m1. Two positions in total, which is what the filter is supposed to leave.
+    assert set(c.state["messages"]) == {"m0", "m1"}
+    assert c.state["messages"]["m0"]["text"] == "something genuinely else"
+    assert "context" not in c.state["messages"]["m0"], "padding is context, it does not carry its own"
+
+
+def test_a_padded_verdict_is_not_cached_under_the_padding(tmp_path):
+    """A padded position has no id, so it cannot reach the cache. Asserted rather than assumed,
+    because a cache entry for text nobody asked about would be served to somebody later."""
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=86400)
+    j.judge([Message("1", "the one real message here")], ["spam"], padding=("something genuinely else",))
+    assert len(j.cache) == 1
+
+
+def test_the_service_pads_a_small_batch_and_leaves_a_full_one_alone(tmp_path, monkeypatch):
+    svc = _service(tmp_path)
+    seen: list[tuple] = []
+
+    def fake(msgs, cats, rules=None, padding=()):
+        seen.append(padding)
+        return _skipped(msgs)
+
+    monkeypatch.setattr(svc.judge, "judge", fake)
+    t = "discord:1"
+    for i in range(4):
+        svc.moderate(t, [Message(f"a{i}", f"an earlier message number {i}", channel="general")])
+    svc.moderate(t, [Message("x", "the message under test", channel="general")])
+    assert len(seen[-1]) == 4, "the four earlier messages become padding"
+    from jevmod.judge import PAD_TO
+
+    svc.moderate(t, [Message(f"b{i}", f"a message in a full batch {i}", channel="general")
+                     for i in range(PAD_TO)])
+    assert seen[-1] == (), "a batch that already fills the request is not padded"
+
+
+def test_the_service_does_not_pad_across_channels(tmp_path, monkeypatch):
+    """A Discord guild's two seconds can hold #general and #support. Padding that from one of them
+    is picking a channel arbitrarily and calling it context."""
+    svc = _service(tmp_path)
+    seen: list[tuple] = []
+    monkeypatch.setattr(svc.judge, "judge",
+                        lambda msgs, cats, rules=None, padding=(): (seen.append(padding), _skipped(msgs))[1])
+    t = "discord:1"
+    svc.moderate(t, [Message("a", "an earlier message in general", channel="general")])
+    svc.moderate(t, [Message("b", "one message from general here", channel="general"),
+                     Message("c", "one message from support here", channel="support")])
+    assert seen[-1] == ()
+
+
+def test_the_switch_turns_padding_off(tmp_path, monkeypatch):
+    """`JEVMOD_PAD_BATCH=0` buys back the cheaper, worse version. The number it trades away is
+    twenty-one points of spam recall, written next to the switch."""
+    monkeypatch.setattr("jevmod.core.service.PAD_BATCH", False)
+    svc = _service(tmp_path)
+    seen: list[tuple] = []
+    monkeypatch.setattr(svc.judge, "judge",
+                        lambda msgs, cats, rules=None, padding=(): (seen.append(padding), _skipped(msgs))[1])
+    t = "discord:1"
+    svc.moderate(t, [Message("a", "an earlier message in general", channel="general")])
+    svc.moderate(t, [Message("b", "the message under test here", channel="general")])
+    assert seen[-1] == ()
+
+
+def test_no_real_message_ever_sits_at_position_zero():
+    """The measurement that reframed JEV-57. A message at m0 gains nothing from its neighbours,
+    +0.014 in a request of ten against about +0.22 everywhere else, and it is asymmetric: spam
+    positives lose 0.15 there while clean text moves 0.01. Index zero costs recall and buys no
+    precision (`benchmark/position_zero.py`, 300 messages).
+
+    A message judged by itself is always at m0, which turned out to be the whole of the effect the
+    issue was opened on.
+    """
+    from jevmod.judge import LEAD_FILLER
+
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=0)
+    j.judge([Message("1", "the one real message here")], ["spam"])
+    assert c.state["messages"]["m0"]["text"] == LEAD_FILLER, "no history, so the constant"
+    assert c.state["messages"]["m1"]["text"] == "the one real message here"
+
+    c2 = _Capture()
+    j2 = Judge(client=c2, cache_ttl_s=0)
+    j2.judge([Message(str(i), f"a real message number {i}") for i in range(4)], ["spam"],
+             padding=("what was said before",))
+    assert c2.state["messages"]["m0"]["text"] == "what was said before", "history beats the constant"
+    real = {m["text"] for k, m in c2.state["messages"].items() if k != "m0"}
+    assert real == {f"a real message number {i}" for i in range(4)}
+
+
+def test_the_lead_filler_never_reaches_a_verdict_or_the_cache():
+    from jevmod.judge import LEAD_FILLER
+
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=86400)
+    out = j.judge([Message("1", "the one real message here")], ["spam"])
+    assert [v.message_id for v in out] == ["1"]
+    assert len(j.cache) == 1, "one entry, for the one real message"
+    assert LEAD_FILLER not in {m["text"] for k, m in c.state["messages"].items() if k != "m0"}

@@ -359,6 +359,59 @@ So the site's aggregate figure is honest and needs no correction. What the site 
 in `odd/tasks/batch-composition-spam-harassment.md` T6b: it presents a single message's score to two
 decimal places, and that is the precision this whole report says the number does not have.
 
+## 9. Correction: it was never the batch size, it was position zero
+
+Section 7 said spam recall is 17.3% for a message judged alone and 38.7% in a request of ten, and
+concluded that batch size is the variable. **That conclusion was wrong, and the data above already
+contained the correction.** Nobody had grouped it by the index each message occupied.
+
+Reconstructing the index from the seeded batches and comparing every message against its own score
+when judged alone, free, on the results already committed:
+
+| condition | index | n | alone | in the batch | lift |
+|---|---|---|---|---|---|
+| batch of 10 | **0** | 15 | 0.395 | 0.409 | **+0.014** |
+| batch of 10 | anywhere else | 135 | 0.511 | 0.735 | **+0.224** |
+| batch of 25 | 0 | 6 | 0.337 | 0.387 | +0.050 |
+| batch of 25 | anywhere else | 144 | 0.506 | 0.733 | +0.227 |
+| batch of 5 | 0 | 30 | 0.467 | 0.493 | +0.026 |
+| batch of 5 | anywhere else | 120 | 0.507 | 0.695 | +0.188 |
+
+**A message at `messages.m0` gains nothing from its neighbours.** Held directly, the same ten
+messages in the same request with nothing changed but the index:
+
+    index 0: 0.566    index 1: 0.729    index 4: 0.735    index 9: 0.762
+
+And it is asymmetric, which is what makes it a defect rather than an offset a threshold absorbs: on
+the same ten-message request, spam positives at index 0 score 0.577 against 0.726 elsewhere, while
+clean messages score 0.095 against 0.106. **Index zero costs recall and buys no precision.**
+
+A message judged by itself is always at m0. That is the whole of the "batch size" effect, and it
+also means that in a busy server's batch of twenty-five, one message in twenty-five is silently
+judged as though it arrived alone.
+
+### The fix, measured
+
+`benchmark/position_zero.py`, 300 messages, one request each: a filler at m0, the real message at
+m1, and the rest of the window behind it.
+
+| the request held | mean, spam | mean, clean | recall | FPR |
+|---|---|---|---|---|
+| today, the message alone at m0 | 0.499 | 0.075 | **17.3%** | 2.7% |
+| a filler at m0, the message at m1, ten in all | 0.665 | 0.115 | **29.3%** | 4.7% |
+| a real batch of ten | 0.703 | 0.109 | 38.7% | 4.0% |
+
+Twelve of the twenty-one points back, for two points of false positives. At a 2% spam rate that is
+the same precision as today with nearly twice the recall. It does not reach a real batch of ten,
+because there the message also has nine varied real neighbours rather than one filler and eight
+pool-mates, and that remainder is not explained here.
+
+**What this costs where it is cheap.** One extra message per request. For a busy server's batch of
+twenty-five that is about 4% more tokens and it rescues the message that currently loses 0.22 for
+being first.
+
+Shipped as the invariant that no real message ever sits at m0 (`jevmod/judge.py`).
+
 ## What to do
 
 1. **Fix the `AGENTS.md` rule** so it distinguishes a repeated request from a rerun.
@@ -371,7 +424,13 @@ decimal places, and that is the precision this whole report says the number does
    messages, and link it to JEV-11 and JEV-7 as a dependency in that direction.
 5. **Treat the reaction loop as a live defect**, not a rough edge: section 6. It drives the category
    to a state it cannot leave, at the spam rates real servers have. It belongs to JEV-12.
-6. **Stop batch size varying with traffic**, section 7, JEV-57. The largest effect in this report and
+6. ~~Stop batch size varying with traffic~~ **Stop putting a real message at index zero**, section
+   9, JEV-57. The original wording of this item was the wrong diagnosis; the measurement is in
+   section 9 and the invariant shipped.
+7. **The remainder is unexplained.** The fix reaches 29.3% recall and a real batch of ten reaches
+   38.7%. Something about nine varied real neighbours is worth more than a filler plus eight
+   pool-mates, and nothing here says what.
+8. Old item six, kept for the record, was: stop batch size varying with traffic, section 7, JEV-57. The largest effect in this report and
    the only one already costing real servers something. `benchmark/batch_context.py` narrows the fix:
    padding a small batch with neighbours the model is not asked about recovers only 23% of the gap,
    so the padding has to be judged and thrown away, and the size to pad to is **ten**, where recall

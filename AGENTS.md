@@ -123,6 +123,12 @@ red-team suite calls Jev about a hundred times; expect a minute and a few cents.
     request. There the p95 is 0.15 to 0.20 and the maximum 0.55.
   - So: assert a category and a direction, or a margin of 0.2, not 0.03. A test that batches
     its own fixtures alongside anything else is asserting on a number that moves by a fifth.
+- **No real message ever sits at `messages.m0`.** `judge()` puts a filler there and starts the real
+  messages at m1. Measured on 300 messages in `benchmark/position_zero.py`: a message at m0 gains
+  nothing from its neighbours (+0.014 in a request of ten) while every other position gains about
+  0.22, and it is asymmetric, spam positives losing 0.15 at m0 while clean text moves 0.01. Index
+  zero costs recall and buys no precision. A message judged by itself is always at m0, which was the
+  whole of the "batch size" effect. Shipping the filler took recall from 17.3% to 29.3%.
 - The Jev state is a dict keyed by position (`messages.m3.text`), never a list. Lists leaked
   probabilities between neighbours in multilingual batches. That fixed the leak and did not fix
   the coupling: regrouping the same messages into different batches of 25 still moves 12% of
