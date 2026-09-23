@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
 from datetime import timedelta
 
@@ -186,51 +187,67 @@ class FeedbackView(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Be less strict about this", style=discord.ButtonStyle.secondary, custom_id="jevmod:fp")
+    @discord.ui.button(label="This was wrong", style=discord.ButtonStyle.secondary, custom_id="jevmod:fp")
     async def wrong(self, itx: discord.Interaction, _button: discord.ui.Button) -> None:
-        await _apply_feedback(itx, 0.03)
+        await _record_label(itx, agreed=False)
 
-    @discord.ui.button(label="Be more strict about this", style=discord.ButtonStyle.secondary, custom_id="jevmod:ok")
+    @discord.ui.button(label="This was right", style=discord.ButtonStyle.secondary, custom_id="jevmod:ok")
     async def right(self, itx: discord.Interaction, _button: discord.ui.Button) -> None:
-        await _apply_feedback(itx, -0.02)
+        await _record_label(itx, agreed=True)
 
 
-async def _apply_feedback(itx: discord.Interaction, delta: float) -> None:
-    """Move that category's line and say where it landed. Anyone who can see the log channel may do this."""
+async def _record_label(itx: discord.Interaction, agreed: bool) -> None:
+    """Record what a human thought of this flag. It no longer moves the line.
+
+    It used to: one press moved that category's threshold by +0.03 or -0.02 and stored nothing.
+    `benchmark/nudge_loop.py` measured what that loop does over time. Its equilibrium sits where
+    precision is 0.60, a number that is the ratio of those two constants and nothing else, and at a
+    2% or 5% spam rate that equilibrium does not exist at all: the line ratchets to 0.99, no message
+    in 1,800 observations scored that high, the category stops flagging, so it stops being
+    corrected, and it stays off. Recall 0.00, in silence, in exactly the channels it was built for.
+
+    So a press is now a labelled datapoint and a threshold is changed by hand with `/mod set`. That
+    turns a ratchet nobody could see into a change somebody chose, and the labels are the dataset
+    three separate measurements this week ran out of. JEV-12.
+
+    Anyone who can see the log channel may still press, unchanged and deliberate: a label is an
+    opinion about one message rather than a setting, so the worst a stranger can now do is add noise
+    to a dataset instead of quietly retuning somebody's server.
+    """
     if not itx.guild_id or not itx.message or not itx.message.embeds:
         return
-    category = category_of(itx.message.embeds[0].title or "")
+    embed = itx.message.embeds[0]
+    category = category_of(embed.title or "")
     tenant = tenant_of(itx.guild_id)
-    policy = service.policy(tenant)
-    if not category or (category not in policy.thresholds and not category.startswith("rule:")):
+    ref = re.search(r"ref (\d+)", (embed.footer.text or "") if embed.footer else "")
+    if not category or not ref:
         await itx.response.send_message(
-            "This flag is from an older version of jevmod, so these buttons cannot tell which setting to "
-            "change. The next one will work.",
+            "This flag is from an older version of jevmod, so these buttons cannot tell which "
+            "message it was about. The next one will work.",
             ephemeral=True,
         )
         return
-    before = policy.thresholds.get(category, RULE_THRESHOLD)
-    new = policy.nudge(category, delta)
-    if new == before:
+
+    # The scores are the whole value of a label: they let precision and recall be recomputed at any
+    # threshold later. Without them there is a verdict about a message nobody can score again,
+    # because the decision row is purged after thirty days and its text with it.
+    decision = service.store.decision_for(tenant, ref.group(1))
+    if not decision:
         await itx.response.send_message(
-            f"{label(category)} is experimental, so its setting does not move.", ephemeral=True
+            "jevmod no longer has the numbers for this message, so there is nothing to attach your "
+            "answer to. Decisions are kept for thirty days.",
+            ephemeral=True,
         )
         return
-    service.save_policy(tenant, policy)
-    softer = delta > 0
+
+    service.store.add_label(tenant, ref.group(1), category, agreed, decision["scores"], "discord")
     await itx.response.send_message(
-        f"Done. From now on jevmod acts on **{label(category)}** "
-        + ("only when it is more sure, so it will act less often." if softer else "sooner, so it will act more often.")
-        + "\n\nThis changed the setting for the whole server, not just this message. `/mod status` shows where "
-        "everything sits and `/mod reset` puts it all back.",
+        f"Noted: you think this **{label(category)}** flag was {'right' if agreed else 'wrong'}.\n\n"
+        "This does not change any setting. It is kept so the line can be moved on evidence instead "
+        f"of one message at a time. To change it now: `/mod set {category} flag <number>`, and "
+        "`/mod status` shows where everything sits.",
         ephemeral=True,
     )
-    # The owner cannot see an ephemeral reply, so leave the trace where they will find it.
-    with contextlib.suppress(Exception):
-        await itx.channel.send(  # type: ignore[union-attr]
-            f"{itx.user.mention} made jevmod {'less' if softer else 'more'} strict about "
-            f"**{label(category)}** for the whole server."
-        )
 
 
 async def act(guild: discord.Guild, m: discord.Message, d: Decision) -> None:
@@ -281,7 +298,10 @@ async def act(guild: discord.Guild, m: discord.Message, d: Decision) -> None:
             embed.add_field(name="go to it", value=f"[open the message]({m.jump_url})", inline=False)
         if problem:
             embed.add_field(name="what to do", value=note, inline=False)
-        embed.set_footer(text=f"jevmod was {how_sure(d.probability)} about this one")
+        # The message id rides in the footer so the feedback buttons can find the decision that
+        # produced this flag and store a human verdict beside its scores. It is already reachable
+        # through the jump link above, so this discloses nothing new to anyone reading the channel.
+        embed.set_footer(text=f"jevmod was {how_sure(d.probability)} about this one · ref {m.id}")
         await channel.send(embed=embed, view=FeedbackView())
 
 

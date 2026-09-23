@@ -519,3 +519,90 @@ def test_selfharm_ships_at_the_line_a_chosen_loss_ratio_puts_it_at():
 
     assert DEFAULT_THRESHOLDS["selfharm"] == 0.5
     assert DEFAULT_ACTIONS["selfharm"] == "flag", "flag-only is what makes a false positive cheap"
+
+
+def test_a_human_label_keeps_the_scores_and_none_of_the_words():
+    """JEV-12. The label is the dataset three separate measurements ran out of this week, and it has
+    to outlive the message it describes without keeping anything anybody wrote.
+
+    Scores rather than text, because `decisions` rows are purged after thirty days and that promise
+    is in the privacy notice. Scores are enough to recompute precision and recall at any threshold
+    for ever; what they cannot do is re-judge the message with a new prompt, and that is the price.
+    """
+    s = Store(":memory:", retention_days=1)
+    t = "discord:1"
+    m = Message("m1", "the message that was flagged", author="42", channel_topic="general")
+    d = Decision("m1", "flag", "spam", 0.91, {"spam": 0.91, "scam": 0.04}, True, "jev")
+    s.log_decision(t, m, d, "rid")
+
+    got = s.decision_for(t, "m1")
+    assert got and got["scores"] == {"spam": 0.91, "scam": 0.04}
+    s.add_label(t, "m1", "spam", agreed=False, scores=got["scores"], source="discord")
+
+    rows = s.labels(t)
+    assert len(rows) == 1
+    assert rows[0]["category"] == "spam" and rows[0]["agreed"] is False
+    assert rows[0]["scores"] == {"spam": 0.91, "scam": 0.04}
+    # Checked against the stored columns rather than a repr: a repr carries a timestamp, and
+    # "42" appears inside one, which is how the first version of this assertion passed for the
+    # wrong reason.
+    assert set(rows[0]) == {"ts", "tenant", "message_id", "category", "agreed", "scores", "source"}
+    assert "the message that was flagged" not in repr(rows[0]), "a label keeps no words"
+    cols = [c[1] for c in s.db.execute("PRAGMA table_info(labels)").fetchall()]
+    assert "author" not in cols and "user" not in cols and "text" not in cols, cols
+
+
+def test_a_label_outlives_the_decision_it_describes():
+    """A thirty day dataset is not a dataset. The label holds no personal data to expire, so the
+    retention sweep does not touch it; `delete_tenant` still does, because that is a different
+    promise."""
+    s = Store(":memory:", retention_days=1)
+    t = "discord:1"
+    m = Message("m1", "the message that was flagged", author="42", channel_topic="general")
+    d = Decision("m1", "flag", "spam", 0.91, {"spam": 0.91}, True, "jev")
+    s.log_decision(t, m, d, "rid")
+    s.add_label(t, "m1", "spam", agreed=True, scores={"spam": 0.91}, source="discord")
+
+    s.db.execute("UPDATE decisions SET ts=?", (time.time() - 3 * 86400,))
+    assert s.purge_expired() == 1
+    assert not s.recent_decisions(t), "the decision is gone"
+    assert len(s.labels(t)) == 1, "the label is not"
+
+    s.delete_tenant(t)
+    assert s.labels(t) == [], "erasure still reaches it"
+
+
+def test_the_discord_buttons_record_a_label_and_move_no_threshold():
+    """The press used to move that category's line by 0.03 and store nothing.
+    `benchmark/nudge_loop.py` measured that loop running the category to 0.99, where nothing scores,
+    so it stops flagging, stops being corrected and stays off at recall 0.00.
+
+    Asserted against the source because the handler needs a live Discord interaction to run, and the
+    property that matters is that no code path from a button reaches `nudge` or `save_policy`.
+    """
+    import inspect
+
+    from jevmod.adapters import discord_bot
+
+    # The docstring names `nudge_loop.py`, so the check is on the code below it rather than on the
+    # whole source: a test that a comment can satisfy is not a test.
+    whole = inspect.getsource(discord_bot._record_label)
+    code = whole.split('"""')[2] if whole.count('"""') >= 2 else whole
+    assert "add_label" in code, "a press has to record something"
+    assert "nudge" not in code and "save_policy" not in code, "and has to change no setting"
+    assert "_apply_feedback" not in inspect.getsource(discord_bot), "the old ratchet is gone"
+
+
+def test_only_one_writer_reaches_the_label_table():
+    """The issue's own argument: two surfaces writing the same storage, defined twice, are two
+    shapes that will not match. The dashboard in the private repository calls the same method."""
+    import inspect
+
+    from jevmod.core.store import Store as S
+
+    everywhere = ""
+    for mod in ("jevmod.core.store", "jevmod.core.service", "jevmod.adapters.discord_bot", "jevmod.api.server"):
+        everywhere += inspect.getsource(__import__(mod, fromlist=["x"]))
+    inserts = everywhere.count("INSERT INTO labels")
+    assert inserts == 1, f"{inserts} places write labels; there must be exactly one"
+    assert hasattr(S, "add_label") and hasattr(S, "labels")
