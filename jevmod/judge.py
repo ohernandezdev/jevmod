@@ -32,6 +32,7 @@ from typing import Any
 
 from typesafe_sdk import Noul, NoulAnswer, RetryPolicy, TypeSafeClient
 
+from .core.context import MAX_CONTEXT_TOKENS, assemble
 from .keys import get_api_key
 
 # The questions live in categories.json so every implementation (Python, npm, MCP) asks Jev exactly the same thing.
@@ -193,7 +194,12 @@ class Judge:
                         # A dict costs a handful of tokens and keeps one rule in this file instead
                         # of two. Omitted entirely when empty, so a message with no history reaches
                         # Jev in exactly the shape it did before this existed.
-                        **({"context": {f"c{j}": c for j, c in enumerate(m.context)}} if m.context else {}),
+                        # Normalised like every other piece of text on the request. It was the one
+                        # that was not: the padding beside it is explicitly cleaned "so it cannot
+                        # smuggle in text the pre-filter would have cleaned", and zalgo, fullwidth
+                        # and enclosed alphanumerics were reaching Jev raw through this field.
+                        **({"context": {f"c{k}": normalize(c) for k, c in enumerate(m.context)}}
+                           if m.context else {}),
                     }
                     # Real messages start at m1. m0 is filled below and is never one of them.
                     for i, (m, text) in enumerate(to_judge, start=1)
@@ -205,7 +211,13 @@ class Judge:
             # have cleaned, and with anything already being judged removed: the buffer holds the
             # batch by the time the batch is judged.
             judged_texts = {t for _, t in to_judge}
+            # Trimmed by the same budget the context is, and for the same reason. `PAD_TO` bounds
+            # how many positions the padding takes and used to bound nothing about their length, so
+            # a window holding nine four-thousand character pastes sent 35 KB of them and asked
+            # every category about each. The documented cost of padding, about eight times, assumed
+            # chat-sized messages and nothing enforced it.
             pad = [p for p in dict.fromkeys(normalize(p) for p in padding) if p and p not in judged_texts]
+            pad = list(assemble(tuple(pad), MAX_CONTEXT_TOKENS * PAD_TO))
             # m0 is never a real message, and that is the whole of this. Measured on 300 messages in
             # `benchmark/position_zero.py`: a message at m0 gains nothing from its neighbours
             # (+0.014 in a request of ten) while every other position gains about 0.22, and the cost
@@ -271,7 +283,11 @@ def _key(text: str, topic: str, cats: list[str], rules: dict[str, str], context:
     still share a key. What no longer shares a key is the same text a day later in a different
     conversation, which is exactly the hit that was wrong.
     """
-    norm = text.lower()
-    ctx = "␟".join(context)  # a symbol no message text contains, so two windows cannot collide
-    h = hashlib.sha256(f"{norm}|{topic}|{','.join(cats)}|{sorted(rules.items())}|{ctx}".encode()).hexdigest()
-    return h[:32]
+    # json.dumps of a list rather than a join on a separator. The separator was U+241F, described
+    # here as "a symbol no message text contains"; `normalize` does not strip it and the buffer
+    # stores raw text, so a message containing it collapsed two different windows into one key and
+    # a verdict from one conversation was served to another. That was demonstrated, not theorised.
+    # JSON quotes and escapes, so no field can impersonate a delimiter.
+    payload = json.dumps([text.lower(), topic, sorted(cats), sorted(rules.items()), list(context)],
+                         ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
