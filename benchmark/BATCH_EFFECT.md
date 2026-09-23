@@ -10,6 +10,11 @@ harassment would have it too. Those are the two categories whose action can be `
 
 ## The short answer
 
+> **Read section 9 first.** This answer is right about composition and wrong about the mechanism:
+> what carries the effect is index zero, not batch identity in general. Section 9 was added the same
+> day and corrects it. What survives unchanged is that composition does nothing, which section 9's
+> own control confirms independently.
+
 **Yes, and it is batch identity rather than batch composition.** Regrouping 150 spam messages into
 different batches of 25, with every batch still entirely spam, moves 18 of them across the shipping
 threshold of 0.85 against a floor of 4 when the request is repeated unchanged. Both arms that
@@ -91,6 +96,12 @@ Two things follow, and the second one corrects the first draft of this report.
 - **Position alone is not distinguishable from noise.** 10 flips against 4 is a coin flip at n = 150.
   The first draft said reordering produced "nearly the whole effect". It does not: on excess over the
   noise floor it is 6 of 14, and it is not significant at all.
+  > **Superseded by section 9, added the same day.** This bullet is a false negative from being
+  > underpowered, not evidence that position does not matter. Only 6 of 150 messages occupy index 0
+  > in a batch of twenty-five, so reordering dilutes the one position that carries the effect across
+  > twenty-four that do not. Section 9 measures index zero directly and finds it costs a spam
+  > positive 0.15. The bullet is left standing because deleting it would hide that this report
+  > reached the wrong conclusion first.
 
 ### 2.1 The composition test
 
@@ -104,6 +115,11 @@ Both arms with neighbours randomised to chance, so composition is the only diffe
 | harassment | clean | 4 | 5 | 3/2 | 1.000 |
 
 Four cells, p = 1.000 in each. Whatever moves these scores, it is not what the neighbours contain.
+
+**And this survives section 9.** A review asked the obvious question: if index zero carries the
+effect, is the membership result just position in disguise? Re-run on the committed data with every
+crossing involving an m0 seat removed, the spam pool gives **16 crossings against a floor of 4**, out
+of 144 messages that never sat at index zero in either arm. Membership matters on its own.
 
 ## 3. How far the scores move
 
@@ -201,11 +217,14 @@ size, 5 discordant pairs against 1 in 150, the power to reach p < 0.05 is:
 | n | power |
 |---|---|
 | 150 (this run) | 19% |
-| 319 (every harassment message in `items.jsonl`) | 60% |
+| 319 (harassment-only rows) | 60% |
+| 353 (**every** row labelled harassment) | 64% |
 | 500 | 84% |
 
-The labelled set holds 319 harassment messages. Even using all of them, this experiment would fail to
-reach significance four times in ten. **JEV-56 cannot be closed for harassment until the labelled set
+The labelled set holds **353** rows labelled harassment; 319 is the count of harassment-*only* rows,
+and calling that "all of them" understated n by a tenth. It does not change the conclusion, 60% to
+roughly 64%, but an argument that turns on "even using every one" has to use every one. Even then
+this experiment fails to reach significance about four times in ten. **JEV-56 cannot be closed for harassment until the labelled set
 grows**, which reverses the ordering the issue itself argues for: it says measuring the batch effect
 must come before labelling 5,000 messages, and for harassment the dependency runs the other way. For
 spam it does not, and spam is answered.
@@ -405,6 +424,12 @@ Twelve of the twenty-one points back, for two points of false positives. At a 2%
 the same precision as today with nearly twice the recall. It does not reach a real batch of ten,
 because there the message also has nine varied real neighbours rather than one filler and eight
 pool-mates, and that remainder is not explained here.
+
+**On a cold channel the request is two items, not ten**, because the padding comes from a buffer
+bounded to fifteen minutes and lost on restart. Measured afterwards, on the same 150: 26.7% recall
+with just the filler, against 29.3% with eight real neighbours and 17.3% with nothing. The filler
+alone does most of the work. Padding with constant fillers instead measured 26.0%, slightly worse
+than sending nothing, so whatever neighbours buy they have to be real messages to buy it.
 
 **What this costs where it is cheap.** One extra message per request. For a busy server's batch of
 twenty-five that is about 4% more tokens and it rescues the message that currently loses 0.22 for
