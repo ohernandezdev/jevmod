@@ -69,7 +69,7 @@ The bot creates a private `#jevmod-log` channel and starts flagging there.
 React ❌ on a log entry to mark a false positive (that category's threshold goes up a notch), ✅ to confirm a
 correct call (down a notch, floor 0.5).
 
-### Telegram and Reddit
+### Telegram, Reddit, Twitch and YouTube
 
 Telegram: [@BotFather](https://t.me/BotFather) → `/newbot`, make the bot a group admin, `pip install
 "jevmod[telegram]"`, set `TELEGRAM_TOKEN`, run `jevmod telegram`. Admin commands: `/mod_status`, `/mod_set`,
@@ -78,6 +78,20 @@ Telegram: [@BotFather](https://t.me/BotFather) → `/newbot`, make the bot a gro
 Reddit: for your own subreddit with your own "script" app credentials, non-commercial (Reddit's API terms).
 `pip install "jevmod[reddit]"`, fill the `REDDIT_*` variables from `.env.example`, run `jevmod reddit`. Reports by
 default; removal and bans are opt-in.
+
+Twitch: register an app at [the developer console](https://dev.twitch.tv/console/apps), then get a *user*
+token for the bot account with the scopes `chat:read`, `moderator:manage:banned_users` and
+`moderator:manage:chat_messages`, and add that account as a moderator of every channel it watches. `pip
+install "jevmod[twitch]"`, fill the `TWITCH_*` variables, run `jevmod twitch`. Chat commands: `!jevmod
+status`, `!jevmod set`, `!jevmod rule`.
+
+YouTube: OAuth credentials from [the Cloud console](https://console.cloud.google.com/apis/credentials) and a
+user token with the `youtube.force-ssl` scope for an account that owns or moderates the live chat. `pip
+install "jevmod[youtube]"` (no extra dependency, it is plain REST), fill the `YOUTUBE_*` variables, run
+`jevmod youtube`. It polls one live stream at a time, at the interval YouTube's own response asks for.
+
+Neither of those two can ban anybody, the same as the other three: `timeout` on Twitch always carries a
+duration, and there is no code path that omits it. Each adapter's module docstring carries the reasoning.
 
 ### What the bots send where
 
@@ -215,7 +229,8 @@ suite in CI. More in [docs/diagrams/](docs/diagrams) and [PLAN.md](PLAN.md).
 
 ## Self-host
 
-One image, one variable picks the role: `api`, `discord`, `telegram`, `reddit`. SQLite on a volume.
+One image, one variable picks the role: `api`, `discord`, `telegram`, `reddit`, `twitch`, `youtube`. SQLite on
+a volume.
 
 ```bash
 cp .env.example .env && docker compose up -d              # API on :8080

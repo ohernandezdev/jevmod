@@ -1,4 +1,4 @@
-# One command, three services, one SQLite volume shared by all roles.
+# One command, one service per role, one SQLite volume shared by all of them.
 #   cp .env.example .env   (fill what you use)   ->   docker compose up -d
 services:
   api:
@@ -29,13 +29,21 @@ services:
     volumes: ["jevmod-data:/data"]
     restart: unless-stopped
     profiles: ["reddit"]
-  # Public demo behind Caddy (HTTPS via Let's Encrypt on a sslip.io hostname or your domain). See deploy/demo/.
-  demo:
+  twitch:
     build: .
-    environment: { JEVMOD_ROLE: demo, JEVMOD_DEMO_DB: /data/jevmod-demo.sqlite }
+    environment: { JEVMOD_ROLE: twitch }
     env_file: .env
     volumes: ["jevmod-data:/data"]
     restart: unless-stopped
-    profiles: ["demo"]
+    profiles: ["twitch"]
+  youtube:
+    build: .
+    environment: { JEVMOD_ROLE: youtube }
+    env_file: .env
+    volumes: ["jevmod-data:/data"]
+    restart: unless-stopped
+    profiles: ["youtube"]
+  # There was a `demo` service here. The role left the open package with the rest of the commercial code, so
+  # the container started and exited on "unknown role"; the hosted repository runs the demo now.
 volumes:
   jevmod-data: {}

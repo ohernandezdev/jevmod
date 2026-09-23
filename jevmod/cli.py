@@ -91,8 +91,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--forget", action="store_true", help="remove the key from the OS keyring")
     p.set_defaults(func=init)
     sub.add_parser("mcp", help="MCP server over stdio (tools: moderate, categories)")
-    for role in ("api", "demo", "hosted", "discord", "telegram", "reddit"):
-        sub.add_parser(role, help=f"run the {role} role (same as JEVMOD_ROLE={role})")
+    # Read from the dispatcher rather than typed again here. The two lists were written separately and drifted:
+    # `demo` and `hosted` are commercial roles that left the open package, and `jevmod demo` still parsed and
+    # then died on "unknown role"; `twitch` and `youtube` shipped as adapters and never got a command at all.
+    from .__main__ import ROLES
+
+    for role in ROLES:
+        if role != "mcp":
+            sub.add_parser(role, help=f"run the {role} role (same as JEVMOD_ROLE={role})")
     args = parser.parse_args(argv)
     if args.cmd in ("check", "init"):
         try:

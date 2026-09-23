@@ -109,7 +109,8 @@ def test_every_role_is_dispatchable(monkeypatch):
     monkeypatch.setattr(m, "run_role", lambda r: seen.append(r))
     # demo and hosted are gone: they belong to the commercial repo, which installs this package and adds its
     # own entry point. The open package must not know they exist.
-    roles = ("api", "discord", "telegram", "reddit", "mcp")
+    roles = ("api", "discord", "telegram", "reddit", "twitch", "youtube", "mcp")
+    assert roles == m.ROLES
     for role in roles:
         m.run_role(role)
     assert seen == list(roles)
@@ -120,6 +121,38 @@ def test_every_role_is_dispatchable(monkeypatch):
         assert f'"{role}"' in src, role
     for gone in ("demo", "hosted"):
         assert f'"{gone}"' not in src, f"{gone} is commercial and must not be in the open dispatcher"
+
+
+def test_the_cli_offers_exactly_the_roles_the_dispatcher_runs(capsys):
+    """The two lists used to be typed out separately and drifted in both directions: `jevmod demo` parsed and
+    then died on "unknown role", and `jevmod twitch` never existed although the adapter did. One list now."""
+    from jevmod.__main__ import ROLES
+    from jevmod.cli import main as cli
+
+    with pytest.raises(SystemExit):
+        cli(["--help"])
+    help_text = capsys.readouterr().out
+    for role in ROLES:
+        assert role in help_text, f"{role} runs but is not offered on the command line"
+    for gone in ("demo", "hosted"):
+        assert f"    {gone}" not in help_text, f"{gone} is commercial and must not be offered"
+
+
+def test_a_role_says_which_variables_are_missing(monkeypatch):
+    """A missing credential must be a sentence naming every variable still unset, not a bare KeyError from
+    inside the adapter -- and it must be raised before the adapter is imported, because importing one opens
+    its Store and leaves a jevmod.sqlite behind in whatever directory the operator was standing in."""
+    from jevmod.__main__ import run_role
+
+    for var in ("TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET", "TWITCH_REFRESH_TOKEN", "TWITCH_BOT_LOGIN",
+                "TWITCH_CHANNELS"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("TWITCH_CLIENT_ID", "abc")
+    with pytest.raises(SystemExit) as exc:
+        run_role("twitch")
+    message = str(exc.value)
+    assert "TWITCH_CLIENT_ID" not in message, "it is set; naming it sends the operator after the wrong thing"
+    assert "TWITCH_CHANNELS" in message and "TWITCH_REFRESH_TOKEN" in message
 
 
 def test_keep_text_chars_env_and_zero(monkeypatch, tmp_path):

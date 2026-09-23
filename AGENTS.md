@@ -46,9 +46,11 @@ scores, judged, reason, custom)`. Errors surface as `typesafe_sdk.TypeSafeError`
 (429/5xx, backoff, Retry-After) and a 20 s timeout. `Moderator` does not catch them.
 
 CLI: `jevmod check [text | -] [--topic T] [--rule R]... [--threshold X] [--json]`; exit 0 clean,
-1 something triggered, 2 error. `jevmod init` stores the key. `jevmod api|discord|telegram|reddit|mcp`
-run that role. **`jevmod twitch` and `jevmod youtube` do not exist yet** although both adapters ship and
-work: run them with `python -m jevmod.adapters.twitch_bot`. Tracked as JEV-35.
+1 something triggered, 2 error. `jevmod init` stores the key.
+`jevmod api|discord|telegram|reddit|twitch|youtube|mcp` runs that role. The list of roles lives in one place, `ROLES` in `jevmod/__main__.py`; `cli.py` reads it rather
+than typing it again, because the two lists drifted in both directions once. A role whose credentials are
+missing exits naming every variable still unset, and does so before the adapter is imported, because each
+adapter opens its `Store` at import time and would otherwise leave a `jevmod.sqlite` behind.
 
 HTTP (`jevmod api`, FastAPI, port 8080): `POST /v1/moderate` (`{"messages":[{"id","text",
 "author","channel_topic","author_trusted"}]}`, max 50, bearer tenant key) returns `{"request_id",
