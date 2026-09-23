@@ -22,6 +22,7 @@ to this buffer would quietly break that promise, which is why the buffer physica
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import OrderedDict, deque
 
@@ -54,6 +55,10 @@ class ConversationBuffer:
     """The last few messages per channel, oldest first, bounded three ways: per channel, by age, and
     by how many channels are held at all.
 
+    Keyed by `(tenant, channel)` rather than by a joined string. The join used a separator a user
+    could type, and `forget_context("acme")` then also emptied a tenant called `acme<sep>evil`. A
+    tuple cannot be spoofed by message text or by a tenant name.
+
     Not persisted, on purpose. A restart losing the last ten messages of a conversation costs one
     slightly worse verdict; a table of everybody's recent messages is a data retention question the
     privacy notice does not currently answer, and JEV-20 to JEV-22 own that decision. In-memory only
@@ -67,23 +72,34 @@ class ConversationBuffer:
         self.max_channels = max_channels
         # OrderedDict rather than dict: eviction needs an order, and `move_to_end` makes the channel
         # cache an LRU in two lines instead of a timestamp scan.
-        self._channels: OrderedDict[str, deque[tuple[float, str]]] = OrderedDict()
+        self._channels: OrderedDict[tuple[str, str], deque[tuple[float, str]]] = OrderedDict()
+        # Every adapter calls `ModerationService.moderate` through `asyncio.to_thread`, so this is
+        # touched from the thread pool and two tenants are two threads. Without the lock, `add`
+        # appending while `window_for` iterates raises "deque mutated during iteration", and two
+        # threads racing the insert-then-evict in `add` raise KeyError on `move_to_end` for a
+        # channel the other one just evicted. Both were reproduced before this existed.
+        self._lock = threading.Lock()
 
-    def add(self, channel: str, text: str, now: float | None = None) -> None:
+    def add(self, channel: tuple[str, str], text: str, now: float | None = None) -> None:
         """Record a message as having been said. Called for every message that arrives, judged or
         not: a pre-filtered "lol" is still part of what the conversation looked like."""
         if not text:
             return
         t = time.time() if now is None else now
-        q = self._channels.get(channel)
-        if q is None:
-            q = self._channels[channel] = deque(maxlen=self.window)
-            if len(self._channels) > self.max_channels:
-                self._channels.popitem(last=False)  # evict the least recently used channel
-        self._channels.move_to_end(channel)
-        q.append((t, text))
+        with self._lock:
+            q = self._channels.get(channel)
+            if q is None:
+                q = self._channels[channel] = deque(maxlen=self.window)
+                while len(self._channels) > max(1, self.max_channels):
+                    evicted, _ = self._channels.popitem(last=False)
+                    if evicted == channel:  # max_channels below 1: never evict what was just added
+                        break
+            if channel in self._channels:
+                self._channels.move_to_end(channel)
+            q.append((t, text))
 
-    def window_for(self, channel: str, exclude: str = "", now: float | None = None) -> tuple[str, ...]:
+    def window_for(self, channel: tuple[str, str], exclude: str = "",
+                   now: float | None = None) -> tuple[str, ...]:
         """The recent messages in this channel, oldest first, dropping anything older than the age
         bound.
 
@@ -91,26 +107,32 @@ class ConversationBuffer:
         by the time it is judged, and showing a message its own text as context would tell the model
         it was said twice.
         """
-        q = self._channels.get(channel)
-        if not q:
-            return ()
         t = time.time() if now is None else now
-        self._channels.move_to_end(channel)
-        return tuple(text for at, text in q if t - at <= self.max_age_s and text != exclude)
+        with self._lock:
+            q = self._channels.get(channel)
+            if not q:
+                return ()
+            self._channels.move_to_end(channel)
+            # Materialised inside the lock: the generator used to escape it and iterate the deque
+            # while another thread was appending to it.
+            return tuple(text for at, text in list(q) if t - at <= self.max_age_s and text != exclude)
 
-    def forget(self, channel: str) -> None:
+    def forget(self, channel: tuple[str, str]) -> None:
         """Drop a channel. `/mod forget` and leaving a server both have to reach this, or the thing
         a server owner was told is deleted is still sitting in a deque."""
-        self._channels.pop(channel, None)
+        with self._lock:
+            self._channels.pop(channel, None)
 
     def forget_all(self) -> None:
-        self._channels.clear()
+        with self._lock:
+            self._channels.clear()
 
-    def channels(self) -> tuple[str, ...]:
+    def channels(self) -> tuple[tuple[str, str], ...]:
         """The channel keys currently held. Exists so an erasure request can find every window
         belonging to a tenant without reaching into the buffer's internals, and so a test can prove
         the eviction bound by counting."""
-        return tuple(self._channels)
+        with self._lock:
+            return tuple(self._channels)
 
     def __len__(self) -> int:
         return len(self._channels)
@@ -131,8 +153,11 @@ def assemble(window: tuple[str, ...], max_tokens: int = MAX_CONTEXT_TOKENS) -> t
     for text in reversed(window):
         cost = max(1, len(text) // CHARS_PER_TOKEN)
         if spent + cost > max_tokens:
-            if not out and cost > max_tokens:
-                break  # one oversized message; leaving it out beats truncating it
+            # `continue`, not `break`. It was `break`, and that dropped the entire window whenever
+            # the newest message was oversized: a wall of pasted spam arrives, the next message is
+            # judged with no context at all, and the feature turns itself off exactly when it would
+            # have helped. Skipping the one that does not fit and carrying on is what the docstring
+            # always said this did.
             continue
         out.append(text)
         spent += cost

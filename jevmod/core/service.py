@@ -46,7 +46,16 @@ MAX_BATCH = int(os.environ.get("JEVMOD_MAX_BATCH", "100") or 100)
 # `JEVMOD_PAD_BATCH=0` buys the cheaper version back. What it trades away is twenty-one points of
 # spam recall, which is why the number is written here next to the switch rather than in a
 # changelog nobody reads.
-PAD_BATCH = (os.environ.get("JEVMOD_PAD_BATCH", "1") or "1").lower() not in ("0", "false", "no")
+# Explicit about every spelling it accepts, and loud about one it does not. The first version
+# treated anything outside {0, false, no} as on, so `JEVMOD_PAD_BATCH=off` left padding running and
+# said nothing: an operator who believed they had turned off eight times the model spend had not.
+_PAD_RAW = os.environ.get("JEVMOD_PAD_BATCH")
+_PAD_FALSE = {"0", "false", "no", "off", "n", ""}
+_PAD_TRUE = {"1", "true", "yes", "on", "y"}
+if _PAD_RAW is not None and _PAD_RAW.strip().lower() not in _PAD_FALSE | _PAD_TRUE:
+    log.warning({"event": "pad_batch_unrecognised", "value": _PAD_RAW[:20],
+                 "using": "on", "accepts": sorted(_PAD_FALSE | _PAD_TRUE)})
+PAD_BATCH = _PAD_RAW is None or _PAD_RAW.strip().lower() not in _PAD_FALSE
 # Whether plans mean anything here, and the plan a tenant sits on when nothing is paying for it. Both are
 # defined in `store` so that the gate and the quota that enforce them cannot drift apart.
 
@@ -69,19 +78,24 @@ class ModerationService:
         # worse verdict and nothing else.
         self.context = ConversationBuffer()
 
-    def _channel_key(self, tenant: str, m: Message) -> str:
+    def _channel_key(self, tenant: str, m: Message) -> tuple[str, str]:
         """One window per conversation. Only Discord splits a tenant into channels; everywhere else
-        `m.channel` is empty and the tenant is the conversation."""
-        return f"{tenant}␟{m.channel}" if m.channel else tenant
+        `m.channel` is empty and the tenant is the conversation.
+
+        A tuple rather than a joined string. The join used a separator a user can type, and a tenant
+        named `acme<sep>evil` was deleted by `forget_context("acme")`. Only the admin key-minting
+        API can produce such a tenant, since all five adapters build theirs from a platform id, but
+        a key that cannot be spoofed costs nothing.
+        """
+        return (tenant, m.channel)
 
     def forget_context(self, tenant: str) -> None:
         """Drop every window belonging to a tenant. `/mod forget`, leaving a server and
         `DELETE /v1/tenant` all promise that what was stored about a server is gone, and a deque of
         its recent messages is stored about that server."""
-        prefix = f"{tenant}␟"
-        for channel in self.context.channels():
-            if channel == tenant or channel.startswith(prefix):
-                self.context.forget(channel)
+        for key in self.context.channels():
+            if key[0] == tenant:
+                self.context.forget(key)
 
     @property
     def judge(self) -> Judge:

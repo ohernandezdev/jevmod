@@ -7,6 +7,7 @@ The bounds are each proved by exceeding them. A test that stays inside a limit p
 not in the way, which is not the same as proving it holds.
 """
 
+import os
 import time
 
 import pytest
@@ -21,7 +22,7 @@ from jevmod.core.context import (
 )
 from jevmod.core.service import ModerationService
 from jevmod.core.store import Store
-from jevmod.judge import Judge, Message, Verdict, _key
+from jevmod.judge import PAD_TO, Judge, Message, Verdict, _key
 
 
 def test_the_window_holds_the_last_ten_and_drops_the_eleventh():
@@ -30,8 +31,8 @@ def test_the_window_holds_the_last_ten_and_drops_the_eleventh():
     b = ConversationBuffer()
     assert WINDOW == 10
     for i in range(15):
-        b.add("c", f"message {i}")
-    w = b.window_for("c")
+        b.add(("t", "c"), f"message {i}")
+    w = b.window_for(("t", "c"))
     assert len(w) == WINDOW
     assert w[0] == "message 5" and w[-1] == "message 14", "oldest first, and the oldest five are gone"
 
@@ -41,9 +42,9 @@ def test_a_message_older_than_the_age_bound_is_not_context():
     before lunch under the first thing after it is worse than sending nothing."""
     b = ConversationBuffer(max_age_s=900)
     now = time.time()
-    b.add("c", "said ages ago", now=now - 1000)
-    b.add("c", "said just now", now=now - 10)
-    assert b.window_for("c", now=now) == ("said just now",)
+    b.add(("t", "c"), "said ages ago", now=now - 1000)
+    b.add(("t", "c"), "said just now", now=now - 10)
+    assert b.window_for(("t", "c"), now=now) == ("said just now",)
 
 
 def test_the_number_of_channels_held_is_bounded_and_evicts_the_least_recent():
@@ -52,22 +53,22 @@ def test_the_number_of_channels_held_is_bounded_and_evicts_the_least_recent():
     process."""
     b = ConversationBuffer(max_channels=3)
     for c in ("a", "b", "c"):
-        b.add(c, "hello there friend")
-    b.window_for("a")  # touching it makes it the most recently used
-    b.add("d", "hello there friend")
+        b.add(("t", c), "hello there friend")
+    b.window_for(("t", "a"))  # touching it makes it the most recently used
+    b.add(("t", "d"), "hello there friend")
     assert len(b) == 3
-    assert "b" in b.channels() or "c" in b.channels()
-    assert "a" in b.channels(), "the one that was read must survive an eviction"
-    assert "d" in b.channels()
+    assert ("t", "b") in b.channels() or ("t", "c") in b.channels()
+    assert ("t", "a") in b.channels(), "the one that was read must survive an eviction"
+    assert ("t", "d") in b.channels()
 
 
 def test_a_message_is_never_its_own_context():
     """The buffer holds the message being judged by the time it is judged, and showing a message its
     own text would tell the model somebody said it twice."""
     b = ConversationBuffer()
-    b.add("c", "first thing")
-    b.add("c", "the message being judged")
-    assert b.window_for("c", exclude="the message being judged") == ("first thing",)
+    b.add(("t", "c"), "first thing")
+    b.add(("t", "c"), "the message being judged")
+    assert b.window_for(("t", "c"), exclude="the message being judged") == ("first thing",)
 
 
 def test_assemble_keeps_the_newest_and_returns_them_oldest_first():
@@ -148,7 +149,7 @@ def test_erasure_reaches_the_window(tmp_path, monkeypatch):
     svc.moderate("discord:2", [Message("2", "another server entirely here", channel="general")])
     assert len(svc.context) == 2
     svc.forget_context("discord:1")
-    assert svc.context.channels() == ("discord:2␟general",), "only the tenant asked for"
+    assert svc.context.channels() == (("discord:2", "general"),), "only the tenant asked for"
 
 
 def test_an_inactive_tenant_is_not_buffered(tmp_path, monkeypatch):
@@ -356,3 +357,100 @@ def test_the_lead_filler_never_reaches_a_verdict_or_the_cache():
     assert [v.message_id for v in out] == ["1"]
     assert len(j.cache) == 1, "one entry, for the one real message"
     assert LEAD_FILLER not in {m["text"] for k, m in c.state["messages"].items() if k != "m0"}
+
+
+# ------------------------------------------------------ what the QA pass found, one test each
+
+
+def test_an_oversized_newest_message_does_not_take_the_window_with_it():
+    """It was `break`, so a wall of pasted spam arriving just before a message left that message
+    with no context at all. The feature turned itself off exactly when it would have helped."""
+    long = "x" * (MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN * 2)
+    assert assemble(("short one", "short two", long)) == ("short one", "short two")
+
+
+def test_the_cache_key_cannot_be_spoofed_by_text_a_user_can_type():
+    """The key joined the window with U+241F, described in the code as a character no message
+    contains. `normalize` does not strip it and the buffer stores raw text, so one message could
+    collapse two different conversations into one key and be served the other's verdict."""
+    base = ("hello", "world", ["spam"], {})
+    assert _key(*base, ("a", "b")) != _key(*base, ("a␟b",))
+    assert _key("x|general", "chat", ["spam"], {}) != _key("x", "general|chat", ["spam"], {})
+
+
+def test_context_is_normalised_on_the_way_out():
+    """Every other piece of text on the request goes through `normalize`. This one did not, so
+    zalgo, fullwidth and enclosed alphanumerics reached Jev raw through the context field."""
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=0)
+    j.judge([Message("1", "the message being judged", context=("ｆｕｌｌｗｉｄｔｈ",))], ["spam"])
+    assert c.state["messages"]["m1"]["context"] == {"c0": "fullwidth"}
+
+
+def test_padding_is_bounded_by_length_and_not_only_by_count():
+    """`PAD_TO` bounds how many positions the padding takes and used to bound nothing about their
+    size, so a window of long pastes sent tens of kilobytes and asked every category about each.
+    The documented cost of padding assumed chat-sized messages and nothing enforced it."""
+    c = _Capture()
+    j = Judge(client=c, cache_ttl_s=0)
+    j.judge([Message("1", "the message being judged")], ["spam"],
+            padding=tuple(f"{i} " + "y" * 4000 for i in range(9)))
+    # Asserted in tokens, because tokens are what the budget is in and `assemble`'s estimate rounds
+    # down per message. Before the fix this was unbounded: nine four-thousand character pastes went
+    # out whole, about 8,800 tokens, with every category asked about each of them.
+    sent = sum(len(m["text"]) // CHARS_PER_TOKEN
+               for k, m in c.state["messages"].items() if k != "m1")
+    assert sent <= MAX_CONTEXT_TOKENS * PAD_TO, f"{sent} tokens of padding"
+
+
+def test_the_buffer_survives_being_used_from_several_threads():
+    """Every adapter calls `moderate` through `asyncio.to_thread`, so two tenants are two threads.
+    `add` appending while `window_for` iterated raised "deque mutated during iteration", and two
+    threads racing the insert-then-evict raised KeyError on a channel the other had just evicted."""
+    import threading
+
+    b = ConversationBuffer(max_channels=8)
+    errors: list[str] = []
+
+    def hammer(n: int) -> None:
+        try:
+            for i in range(600):
+                b.add(("t", f"c{(n + i) % 40}"), f"message number {i}")
+                b.window_for(("t", f"c{i % 40}"))
+        except Exception as exc:  # noqa: BLE001 - the point of the test is that there are none
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=hammer, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors[:3]
+
+
+def test_the_padding_switch_understands_off():
+    """`JEVMOD_PAD_BATCH=off` used to leave padding on and say nothing, so an operator who believed
+    they had turned off eight times the model spend had not."""
+    import importlib
+
+    import jevmod.core.service as svc
+
+    for value, expected in (("off", False), ("0", False), ("no", False), ("", False),
+                            ("1", True), ("on", True), ("banana", True)):
+        os.environ["JEVMOD_PAD_BATCH"] = value
+        assert importlib.reload(svc).PAD_BATCH is expected, value
+    os.environ.pop("JEVMOD_PAD_BATCH", None)
+    importlib.reload(svc)
+
+
+def test_forget_context_cannot_reach_another_tenant(tmp_path, monkeypatch):
+    """The window key was `f"{tenant}<sep>{channel}"`, so a tenant named `acme<sep>evil` was emptied
+    by `forget_context("acme")`. Only the admin key-minting API can create such a tenant, and a key
+    that cannot be spoofed costs nothing."""
+    svc = _service(tmp_path)
+    monkeypatch.setattr(svc.judge, "judge", lambda msgs, *a, **k: _skipped(msgs))
+    svc.moderate("acme", [Message("1", "something said by the real tenant")])
+    svc.moderate("acme␟evil", [Message("2", "something said by the other one")])
+    assert len(svc.context) == 2
+    svc.forget_context("acme")
+    assert svc.context.channels() == (("acme␟evil", ""),)
