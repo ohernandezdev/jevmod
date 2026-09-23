@@ -372,7 +372,10 @@ decimal places, and that is the precision this whole report says the number does
 5. **Treat the reaction loop as a live defect**, not a rough edge: section 6. It drives the category
    to a state it cannot leave, at the spam rates real servers have. It belongs to JEV-12.
 6. **Stop batch size varying with traffic**, section 7, JEV-57. The largest effect in this report and
-   the only one already costing real servers something.
+   the only one already costing real servers something. `benchmark/batch_context.py` narrows the fix:
+   padding a small batch with neighbours the model is not asked about recovers only 23% of the gap,
+   so the padding has to be judged and thrown away, and the size to pad to is **ten**, where recall
+   peaks at 38.7% and the bill is 2.5 times smaller than padding to twenty-five.
 
 ## Reproduce
 
