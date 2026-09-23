@@ -165,7 +165,10 @@ Pools, from `benchmark/data/items.jsonl` (2,531 labelled: 1,658 clean, 319 haras
       **`Batcher` collects for a fixed time window, so batch size is the server's traffic.** A quiet
       Discord server runs spam at 17% recall and a busy one at 37%, same threshold, same messages,
       nobody told. Every published spam figure in the repo was measured at batch 25, the favourable
-      end. Needs its own issue; the fix is to stop batch size varying with traffic.
+      end. **JEV-57**, Urgent, with the three candidate fixes written down: a minimum batch size that
+      trades latency in quiet channels, padding the batch with already-judged recent messages as
+      context rather than as things to judge, or a calibrated threshold per batch size. None is
+      obviously right, which is why the issue proposes rather than decides.
 - [x] T6h. The repeat control is not perfectly unbiased: `pure2` beats `pure` on 70 messages against
       20, p = 0.000, a systematic +0.007. A twenty-seventh of the batch effect, changes nothing here,
       but "a repeated request is deterministic" should not be written as though it were.
@@ -207,5 +210,6 @@ a regrouping as "nothing changed at all".
 T6d, T6e, T6g and T6h done. The batch-size finding in T6g is larger than the question this task was
 opened to answer, and it is the only thing here already costing real servers something.
 
-Next: T6b (what the site owes a reader), now with more to say than when it was written, and an issue
-for T6g.
+JEV-57 abierta para T6g. Queda T6b, qué le debe el site a un lector, y ahora tiene más que decir que
+cuando se escribió: la precisión de dos decimales era el asunto, y el recall que depende del tráfico
+es mayor.

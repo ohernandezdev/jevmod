@@ -326,7 +326,8 @@ the quiet server is the one least able to notice. Every published spam figure in
 measured at batch 25 (`run_jevmod.py`, `BATCH = 25`), which is the favourable end.
 
 This is a bigger defect than the one this report set out to measure, and it has a direction: the fix
-is to stop the batch size varying with traffic, not to tell owners to have busier servers.
+is to stop the batch size varying with traffic, not to tell owners to have busier servers. Tracked
+as **JEV-57**, which carries the three candidate fixes and the reason none of them is obvious.
 
 ### One thing the controls turned up against themselves
 
@@ -347,8 +348,8 @@ quite true and should not be written as though it were.
    messages, and link it to JEV-11 and JEV-7 as a dependency in that direction.
 5. **Treat the reaction loop as a live defect**, not a rough edge: section 6. It drives the category
    to a state it cannot leave, at the spam rates real servers have. It belongs to JEV-12.
-6. **Stop batch size varying with traffic**, section 7. This is the largest effect in this report and
-   the only one that is already hurting real servers. It needs its own issue.
+6. **Stop batch size varying with traffic**, section 7, JEV-57. The largest effect in this report and
+   the only one already costing real servers something.
 
 ## Reproduce
 
