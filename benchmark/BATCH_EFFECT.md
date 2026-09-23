@@ -375,7 +375,10 @@ decimal places, and that is the precision this whole report says the number does
    the only one already costing real servers something. `benchmark/batch_context.py` narrows the fix:
    padding a small batch with neighbours the model is not asked about recovers only 23% of the gap,
    so the padding has to be judged and thrown away, and the size to pad to is **ten**, where recall
-   peaks at 38.7% and the bill is 2.5 times smaller than padding to twenty-five.
+   peaks at 38.7% and the bill is 2.5 times smaller than padding to twenty-five. **The buffer it
+   needs now exists**: `jevmod/core/context.py`, shipped for JEV-17, already holds the last ten
+   messages per channel, bounded and erasable. JEV-57 is now a change to what `_judge_batch` sends,
+   not one that has to build storage first.
 
 ## Reproduce
 
