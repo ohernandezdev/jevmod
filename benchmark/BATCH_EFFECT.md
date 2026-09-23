@@ -216,19 +216,78 @@ Mid-range scores move and confident ones do not. Whether batching destabilises m
 mid-range scores are simply unstable cannot be separated here: it needs an arm that asks one message
 per request, which this design never had. That arm is the obvious next experiment and it is cheap.
 
+## 6. The Discord reaction loop, which this data also condemns
+
+`discord_bot.py:358` lets a moderator react to a log entry: ❌ raises that category's threshold by
+0.03, ✅ lowers it by 0.02. Nothing had measured what that does over time. It can be answered from
+the results above without spending anything, because they hold 150 real spam messages and 150 real
+clean ones scored five times each. `benchmark/nudge_loop.py` runs it; the moderator in it is
+idealised, reacting to every flag and never wrong about whether it was spam, which is the most
+favourable case the mechanism can be given.
+
+**The loop aims at a number nobody chose.** At equilibrium the ups and downs cancel, 0.03 × false
+positives = 0.02 × true positives, so it settles where precision is 0.60. That is the ratio of two
+constants, identical for a support forum and a meme channel.
+
+**And at a realistic spam rate that equilibrium does not exist.** Precision has to pass through 0.60
+somewhere between the clamps for the loop to have anything to settle on:
+
+| spam rate | P@0.50 | P@0.70 | P@0.85 | P@0.95 | P@0.99 | crosses 0.60? |
+|---|---|---|---|---|---|---|
+| 2% | 0.20 | 0.20 | 0.19 | 0.21 | none | **no** |
+| 5% | 0.39 | 0.39 | 0.37 | 0.41 | none | **no** |
+| 10% | 0.58 | 0.58 | 0.56 | 0.60 | none | **no** |
+| 25% | 0.80 | 0.80 | 0.79 | 0.82 | none | yes |
+| 50% | 0.92 | 0.92 | 0.92 | 0.93 | none | yes |
+
+Simulated over 4,000 messages, drawing each score from the five real observations of that message:
+
+| spam rate | where the line ends up | precision | recall |
+|---|---|---|---|
+| 2% | **0.99** | — | **0.00** |
+| 5% | **0.99** | — | **0.00** |
+| 10% | 0.99 | 0.58 | 0.16 |
+| 25% | 0.50 | 0.83 | 0.81 |
+| 50% | 0.50 | 0.94 | 0.83 |
+
+**0.99 is an absorbing state.** No message in 1,800 observations scored 0.99 or higher, the highest
+being 0.98. Once the line reaches the ceiling the category stops flagging, so it stops receiving
+reactions, so it never comes back down. **The feature turns the category off, silently, in exactly
+the channels it was built for**, and the owner is never told. At a high spam rate it runs to the
+other clamp instead and flags everything. There is no setting where it does the thing it promises.
+
+Two more things fall out of the same table:
+
+- **One reaction is smaller than the message that provoked it.** The same spam message spans 0.16
+  across its five batches, median, and 87% of them span more than the 0.03 a reaction applies. A
+  moderator is correcting a number that would have been different had the message arrived a second
+  earlier, by less than the difference.
+- **The threshold knob buys almost nothing here.** Precision moves 0.02 between 0.50 and 0.95 at
+  every base rate in the table. Reading that with section 5's caveat about the pools: the spam pool
+  is YouTube comments and the clean pool is long prose, so the absolute precisions do not transfer
+  to a Discord channel, but the flatness is a property of the two score distributions rather than of
+  the base rate, and it deserves its own measurement on chat-shaped text.
+
+This does not belong in this branch to fix. JEV-12 already exists to capture human decisions
+properly and already names `policy.nudge()` as the thing that moves a threshold without storing
+anything. This is the measurement that says how urgent that is.
+
 ## What to do
 
 1. **Fix the `AGENTS.md` rule** so it distinguishes a repeated request from a rerun.
 2. **Do not tune a threshold on a single message's score**, in the dashboard or in a bot command.
-   The reaction nudge in `discord_bot.py` moves a threshold by 0.03 on one reaction, which is inside
-   the noise for 65% of spam messages. That mechanism deserves its own look.
+   The reaction nudge moves a threshold by 0.03 on one reaction, inside the noise for 65% of spam
+   messages. Section 6 is that look, and it found worse than imprecision.
 3. **Run the one-message-per-request arm** before believing this is about batching at all.
 4. **Do not close JEV-56 for harassment.** Re-run it when the labelled set passes 500 harassment
    messages, and link it to JEV-11 and JEV-7 as a dependency in that direction.
+5. **Treat the reaction loop as a live defect**, not a rough edge: section 6. It drives the category
+   to a state it cannot leave, at the spam rates real servers have. It belongs to JEV-12.
 
 ## Reproduce
 
 ```
+python -m benchmark.nudge_loop                           # free, section 6, no API calls
 python -m benchmark.batch_effect pools                   # free: pools, drops, batch counts
 python -m benchmark.batch_effect pilot                   # paid, one batch per condition
 python -m benchmark.batch_effect ask pure                # paid, and likewise pure2, reordered,

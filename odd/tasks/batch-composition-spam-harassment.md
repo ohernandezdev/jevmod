@@ -144,8 +144,14 @@ Pools, from `benchmark/data/items.jsonl` (2,531 labelled: 1,658 clean, 319 haras
       **That predicts which categories will be composition-sensitive**: the ones asking about the
       author or the world. `doxxing` and `minors` are the two shipped categories closest to that
       shape and both are unmeasured. Written into both reports.
-- [ ] T6d. The reaction nudge in `discord_bot.py:358` moves a threshold by 0.03 on one reaction,
-      which is inside the noise for 65% of spam messages. That mechanism needs its own look.
+- [x] T6d. The reaction nudge. It needed its own look and the look found worse than imprecision.
+      `benchmark/nudge_loop.py`, free, no API calls, section 6 of the report. The loop's equilibrium
+      is where precision is 0.60, set by the ratio 0.03 to 0.02 and nothing else. At a 2% or 5% spam
+      rate precision never reaches 0.60 anywhere between the clamps, so there is no equilibrium: the
+      line ratchets to 0.99, nothing in 1,800 observations scores that high, the category stops
+      flagging, so it stops being corrected, and it stays off. **The feature silently disables the
+      category in exactly the channels it was built for.** Belongs to JEV-12, which already names
+      `policy.nudge()` as the thing that moves a threshold without storing anything.
 - [ ] T6e. The one-message-per-request arm. Absolute movement correlates with each score's own
       `p(1-p)` at r = +0.60 to +0.68, including inside `pure2` where nothing changed, so "mid-range
       scores are intrinsically unstable" is not yet separated from "batching destabilises them".
@@ -184,5 +190,6 @@ T6a and T6c done: `AGENTS.md` now says how much margin a test may assume and why
 whether the request repeats, and `REPORT2.md`, `REPORT3.md` and `deterministic.py` no longer describe
 a regrouping as "nothing changed at all".
 
-Next: T6b (what the site owes a reader), T6d (the Discord reaction nudge moves 0.03, inside the noise
-for 65% of spam messages), T6e (the one-message-per-request arm).
+T6d done, and it was the biggest thing this measurement turned up that is not about batching.
+
+Next: T6b (what the site owes a reader) and T6e (the one-message-per-request arm).
