@@ -10,6 +10,14 @@ measures instead of assuming. Two separate questions, and they have different an
 
 1. **Does Laya rank the same messages the same way?** If it does, it is a fine development loop for
    anything about the product's own logic: thresholds, policy, the shape of a question.
+
+   > **Narrowed on 2026-09-23, by using it.** This measures one question, `spam`, and the agreement
+   > it finds does not carry to an arbitrary one. Running `scripts/site/judge_copy.py`'s five house
+   > style questions through Laya, three separated a clean control from a dirty one and two did not:
+   > `promise_without_mechanism` gave +0.14, and **`unbacked_number` came back inverted**, 0.80 on
+   > the clean control against 0.20 on the dirty one. So "ranking transfers" is a claim about the
+   > question that was measured, not about Laya, and a new question has to be controlled on Laya
+   > before its answers mean anything.
 2. **Does Laya reproduce Jev's batch-size effect?** `BATCH_EFFECT.md` section 7 measured that the
    same spam message scores 0.499 alone and 0.719 in a batch of twenty-five, on Jev. If Laya does
    not do that, then Laya cannot be used to study it, and no amount of agreement on single messages
