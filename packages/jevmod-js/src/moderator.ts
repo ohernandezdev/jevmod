@@ -18,6 +18,19 @@ export interface CheckOptions {
   channelTopic?: string;
   /** True skips judgment entirely (moderators, verified staff). */
   authorTrusted?: boolean;
+  /**
+   * What was said in this channel just before, oldest first. It rides along in the request and is
+   * asked the same questions; its answers are discarded and it never becomes a decision.
+   *
+   * It is worth passing. The same spam message reaches 17.3% recall judged alone and 38.7% in a
+   * request of ten (`benchmark/BATCH_EFFECT.md` section 7, 300 real messages), and a caller
+   * checking one message at a time is at the bottom of that curve. Ten is where it saturates.
+   *
+   * Only the text: no author names or ids, the same promise the rest of the package keeps. The
+   * Python package fills this from its own conversation buffer; this one is stateless, so the
+   * caller keeps the window.
+   */
+  padding?: readonly string[];
 }
 
 export interface CheckManyOptions extends CheckOptions {
@@ -48,7 +61,9 @@ export class Moderator {
       ...(options.channelTopic !== undefined ? { channelTopic: options.channelTopic } : {}),
       ...(options.authorTrusted !== undefined ? { authorTrusted: options.authorTrusted } : {}),
     }));
-    const verdicts = await this.judge.judge(msgs, this.policy.enabledCategories(), this.policy.rules);
+    const verdicts = await this.judge.judge(
+      msgs, this.policy.enabledCategories(), this.policy.rules, options.padding ?? [],
+    );
     return verdicts.map((v) => decisionToJSON(decide(this.policy, v)));
   }
 }

@@ -1,5 +1,6 @@
 // Offline: the pre-filter and normalisation must behave like jevmod/judge.py, and the questions must be the
 // same file as the Python package's.
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -77,9 +78,65 @@ describe("cache key and repr match the Python package", () => {
     expect(pyRepr("both ' and \"\ttab\x01")).toBe("'both \\' and \"\\ttab\\x01'");
   });
 
-  it("cacheKey equals hashlib.sha256(...)[:32] computed in Python", () => {
-    const rules = { no_politics: "No political discussion.", b: "it's \"quoted\"\n" };
-    expect(cacheKey("Hello World", "gaming", ["spam", "scam"], rules)).toBe("bec74a552cacd69b776ea230431d97bd");
+  // This used to be a hash somebody computed once in Python and pasted in as a literal. When the
+  // Python `_key` changed from a joined string to a JSON payload, the golden value went on passing
+  // against a function that no longer existed, so the claim of sameness survived the thing it was
+  // claiming. It now runs the Python function, the way the categories.json check below reads the
+  // Python file, and skips the same way when there is nothing to compare against.
+  const ROOT = resolve(__dirname, "..", "..", "..");
+  // `sys.stdin.buffer.read().decode("utf-8")`, not `json.load(sys.stdin)`. On Windows a Python
+  // subprocess gets cp1252 on stdin, so the text decoder silently mangled "café ❤" on its way in
+  // and the two sides were compared on different inputs. The non-ascii case below is the one that
+  // caught it, and it failed as a difference in the key rather than as an encoding error.
+  const PY_SRC = "import json,sys;from jevmod.judge import _key;" +
+    'a=json.loads(sys.stdin.buffer.read().decode("utf-8"));' +
+    "print(_key(a[0],a[1],a[2],dict(a[3]),tuple(a[4])))";
+  const PY_EXES = [resolve(ROOT, ".venv", "Scripts", "python.exe"), resolve(ROOT, ".venv", "bin", "python")];
+
+  const pythonKey = (args: unknown[]): string | null => {
+    for (const exe of PY_EXES) {
+      const r = spawnSync(exe, ["-c", PY_SRC], { cwd: ROOT, input: JSON.stringify(args), encoding: "utf8" });
+      if (r.status === 0) return r.stdout.trim();
+    }
+    return null;
+  };
+
+  // Probed once, and the tests below are *skipped* rather than passed when it fails: a published
+  // package, a checkout with no venv or one where the Python deps are not installed has nothing to
+  // compare against, and a cross-language check that quietly turns into a green tick is the same
+  // kind of lie as the golden hash it replaced.
+  const PY_AVAILABLE = pythonKey(["probe", "t", [], [], []]) !== null;
+
+  const CASES: Array<[string, unknown[]]> = [
+    ["plain", ["Hello World", "gaming", ["spam", "scam"], [], []]],
+    ["rules with quotes and a newline", [
+      "Hello World", "gaming", ["spam"],
+      [["b", "it's \"quoted\"\n"], ["no_politics", "No political discussion."]], [],
+    ]],
+    ["padding", ["hello", "gaming", ["spam"], [], ["hey there", "sup"]]],
+    // The separator bug the JSON payload exists to prevent: a pipe in the topic used to be able to
+    // impersonate a field boundary, so these two inputs are the pair that must not collide.
+    ["a pipe in the topic", ["a", "gaming|spam", ["spam"], [], []]],
+    ["non-ascii and a control character", ["café ❤", "gam\u0001ing", ["spam"], [], ["ñ"]]],
+  ];
+
+  for (const [name, args] of CASES) {
+    it.skipIf(!PY_AVAILABLE)(`cacheKey is byte-identical to the Python _key: ${name}`, () => {
+      const theirs = pythonKey(args);
+      const [text, topic, cats, rules, padding] = args as [string, string, string[], [string, string][], string[]];
+      expect(cacheKey(text, topic, cats as never, Object.fromEntries(rules), padding)).toBe(theirs);
+    });
+  }
+
+  it("the padding is part of the key, because the neighbours change the score", () => {
+    const k = (padding: string[]) => cacheKey("hello", "gaming", ["spam"], {}, padding);
+    expect(k(["a"])).not.toBe(k(["b"]));
+    expect(k([])).not.toBe(k(["a"]));
+    expect(k(["a", "b"])).toBe(k(["a", "b"]));
+  });
+
+  it("the same two categories in either order are one key", () => {
+    expect(cacheKey("hi", "t", ["spam", "scam"], {})).toBe(cacheKey("hi", "t", ["scam", "spam"], {}));
   });
 });
 

@@ -6,7 +6,10 @@ involving minors, plus for rules you write in plain language. You own the thresh
 is deleted until you turn that on.
 
 This is the TypeScript port of the Python package in this repository. It asks Jev the same questions
-(`categories.json` is shared byte for byte), applies the same policy and returns the same decision shape.
+(`categories.json` is shared byte for byte), applies the same `m0` discipline described below, applies the
+same policy and returns the same decision shape. The one difference: the Python package fills the `m0`/padding
+positions automatically from a per-channel conversation buffer (`jevmod/core/context.py`); this package has no
+buffer, so the caller passes `padding` explicitly.
 
 ## Install
 
@@ -58,9 +61,29 @@ package and `GET/PUT /v1/policy`, so a policy can move between the three.
 
 ### Lower level
 
-`Judge` does the batching, caching and the single Jev request (`judge(messages, categories, customRules)` returns
-`Verdict`s with raw probabilities; counters `requests`, `inputTokens`, `judgedMessages`). `decide(policy, verdict)`
-turns a verdict into a decision. `normalize` and `prefilter` are exported for tests and tooling.
+`Judge` does the batching, caching and the single Jev request:
+`judge(messages, categories, customRules, padding)` returns `Verdict`s with raw probabilities; counters
+`requests`, `inputTokens`, `judgedMessages`. `decide(policy, verdict)` turns a verdict into a decision.
+`normalize` and `prefilter` are exported for tests and tooling.
+
+`padding` is optional text, oldest first, that rides along in the request and is asked the same questions, but
+whose answers are discarded — it exists because the batch's size and composition change the answers Jev gives
+for the messages you actually care about (measured in the Python package's `benchmark/BATCH_EFFECT.md`, section
+7: the same spam message reaches 17.3% recall judged alone and 38.7% batched with nine others). The request
+never puts a real message at `messages.m0`: that position always holds either the oldest padding item or, with
+no padding at all, a constant filler (`hey everyone, how is it going today`). `benchmark/position_zero.py` in
+the Python package found that position gains nothing from its neighbours while every other position gains
+about 0.22, asymmetrically, so a message judged alone is always at the one position that costs it recall. This
+package never fills `padding` on its own — there is no conversation buffer here — so a caller that wants the
+same batch-size benefit the Python package's bots get for free needs to keep its own short rolling window of
+recent channel text and pass it in. `check` and `checkMany` take it as an option, so you do not have to drop
+down to `Judge` to use it.
+
+The padding is part of the cache key, which costs hit rate deliberately. The same text scored beside different
+neighbours is not the same score: regrouping the same messages into different batches moves 12% of spam
+positives across their threshold, against 2.7% for a request repeated unchanged. The hit a cache is actually
+for here — the same text posted forty times in a minute — still shares a key, because those forty arrive with
+near-identical padding.
 
 ## API key
 

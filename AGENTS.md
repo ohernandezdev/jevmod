@@ -72,8 +72,16 @@ in `plugin/` or `claude mcp add jevmod -- jevmod mcp`; in Cursor or Codex, add
 `{"command": "jevmod", "args": ["mcp"], "env": {"TYPESAFE_API_KEY": "..."}}` to their MCP config.
 
 npm (`packages/jevmod-js/`, TypeScript): same questions (`jevmod/categories.json`), same policy,
-`check`, `checkMany`, and an HTTP client for a deployed API. Check the package's own README for
-the exact exports; it is developed in parallel with this file.
+same `m0` discipline (no real message ever sits at `messages.m0`; a constant filler or the caller's
+own padding does), the same cache key down to the byte, `check`, `checkMany`, and an HTTP client for
+a deployed API. It differs from the Python package in one place: Python fills the padding around
+`m0` automatically from a per-channel conversation buffer (`jevmod/core/context.py`); the npm
+package has no buffer, so `padding` is an explicit argument to `Judge.judge` and an option on
+`check` and `checkMany`, and the caller keeps the window. The cache key sameness is checked rather
+than asserted: `packages/jevmod-js/tests/normalize.test.ts` runs the Python `_key` and compares, and
+skips visibly when there is no Python to run. It used to be a hash pasted in as a literal, which
+went on passing after the Python side changed. Check the package's own README for the exact
+exports; it is developed in parallel with this file.
 
 ## Where things live
 

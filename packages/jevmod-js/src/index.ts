@@ -8,7 +8,19 @@
 // `checkMany([...])` judges a batch in one request. Thresholds and actions come from a `Policy` you can pass in.
 export { CATEGORIES, CATEGORY_NAMES, CATEGORIES_VERSION, isCategory, type Category, type CategoryName } from "./categories.js";
 export { normalize, prefilter, htmlUnescape, countAlnum, isCombining, LINK_RE, type Message } from "./normalize.js";
-export { Judge, Verdict, cacheKey, pyRepr, type JudgeOptions, type Scores } from "./judge.js";
+export {
+  Judge,
+  Verdict,
+  cacheKey,
+  pyRepr,
+  assemble,
+  PAD_TO,
+  LEAD_FILLER,
+  MAX_CONTEXT_TOKENS,
+  CHARS_PER_TOKEN,
+  type JudgeOptions,
+  type Scores,
+} from "./judge.js";
 export {
   ACTIONS,
   DEFAULT_ACTIONS,
