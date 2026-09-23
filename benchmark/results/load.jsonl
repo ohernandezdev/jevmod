@@ -1,0 +1,6 @@
+{"streams": 1, "requests": 4, "p50_ms": 515.1646500162315, "p95_ms": 547.8590999846347, "rate_limited": 0, "other_errors": 0}
+{"streams": 2, "requests": 8, "p50_ms": 584.5289000135381, "p95_ms": 663.7240999843925, "rate_limited": 0, "other_errors": 0}
+{"streams": 4, "requests": 16, "p50_ms": 550.6190999876708, "p95_ms": 682.7192000346258, "rate_limited": 0, "other_errors": 0}
+{"streams": 8, "requests": 32, "p50_ms": 528.1759499921463, "p95_ms": 692.2184999566525, "rate_limited": 0, "other_errors": 0}
+{"streams": 16, "requests": 64, "p50_ms": 527.9896499705501, "p95_ms": 725.0300999730825, "rate_limited": 0, "other_errors": 0}
+{"streams": 32, "requests": 128, "p50_ms": 561.5647000377066, "p95_ms": 986.5047000348568, "rate_limited": 45, "other_errors": 0}
