@@ -29,10 +29,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from jevmod.core.context import WINDOW, assemble  # noqa: E402
+from jevmod.core.policy import DEFAULT_ACTIONS  # noqa: E402
 from jevmod.judge import CATEGORIES, Judge, Message  # noqa: E402
 
 DATA = Path(__file__).parent / "data" / "items.jsonl"
-CATS = [c for c in CATEGORIES if c != "offtopic"]
+# The categories that ship on, which is what a server is charged for. Excluding `offtopic` by
+# name used to be the same thing and stopped being it when `ai_generated` arrived off by
+# default: see the note in `run_jevmod.py`, where it put 26% on a published cost figure.
+CATS = [c for c in CATEGORIES if DEFAULT_ACTIONS.get(c, "flag") != "off"]
 BATCH = 25
 
 

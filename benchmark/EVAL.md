@@ -144,3 +144,54 @@ python -m benchmark.run_context_ab on           # paid, $0.19
 python -m benchmark.evaluate context_off context_on            # free
 python -m benchmark.evaluate context_off --show spam --limit 4 # free, and read them
 ```
+
+## The context window against a noise floor, and the decision it leaves open
+
+Added 2026-09-24, for JEV-18. Free: it recomputes from files already committed.
+
+The A/B above says the window moves the metrics by almost nothing. What it could not say was whether
+"almost nothing" was the window being inert or the measurement being unable to see it, because there
+was no control: nobody had asked Jev the same question twice and measured the spread.
+
+JEV-60 produced that control. `results/jevmod_v2.jsonl` and `jevmod_v3.jsonl` are the same 2,531
+messages, the same code, the same batching, run twice. Against that floor:
+
+| category | mean shift, window on against off | mean shift, one run against a repeat of itself | ratio |
+|---|---|---|---|
+| spam | +0.0050 | −0.0001 | 43x |
+| scam | +0.0026 | −0.0002 | 13x |
+| harassment | −0.0026 | +0.0003 | 8x |
+| nsfw | +0.0051 | +0.0001 | 92x |
+| selfharm | −0.0000 | +0.0002 | — |
+| doxxing | +0.0016 | −0.0001 | 13x |
+| minors | −0.0008 | −0.0001 | 9x |
+
+| | flagged-at-all verdicts that differ, of 2,504 |
+|---|---|
+| window on against off | 68 (2.7%) |
+| one run against a repeat of itself | 22 (0.9%) |
+
+**So the window is not inert.** It moves scores eight to ninety times further than asking twice does,
+and it flips about 46 flagged-at-all verdicts that noise does not — roughly one message in fifty-five.
+A server owner would see those.
+
+**And it does not improve anything measurable here.** ΔF1 is negative or flat on four of the five
+labelled categories and ΔAUROC stays inside 0.002 either way. It costs 41% more per judged message
+(`LOAD.md`), measured from billed tokens.
+
+The caveat from the A/B still governs and is the whole reason this is not a verdict on the feature:
+**this set has no conversations in it.** The window is being fed the preceding rows of the same
+source, which are plausible neighbours and not a conversation. The one place the mechanism has been
+seen to work is `tests/test_judge.py::test_context_changes_a_verdict_that_one_message_cannot_settle`,
+where "yeah she totally deserves it lol" scores harassment 0.14 alone and 0.59 under a pile-on of
+three. That is a constructed case, n=1, and it is a demonstration rather than a measurement.
+
+What is left is a product decision rather than a measurement, and it is stated here rather than made:
+the window ships **on** by default, costs 41%, changes one verdict in fifty-five, and has no measured
+benefit on the only labelled data that exists. Turning it off until there is labelled conversation
+data would be defensible. So would leaving it on, on the strength of the constructed case and the
+argument that a pile-on is exactly what a single message cannot settle. What is not defensible is
+leaving it on *because nobody looked*, which is where it was until today.
+
+Whichever way it goes, the dependency is the same one three issues have now hit: labelled data with
+conversations in it. JEV-11 and JEV-7 own that.

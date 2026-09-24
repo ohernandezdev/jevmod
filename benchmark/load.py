@@ -31,13 +31,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from typesafe_sdk import RetryPolicy, TypeSafeClient, TypeSafeError, TypeSafeRateLimitError  # noqa: E402
 
+from jevmod.core.policy import DEFAULT_ACTIONS  # noqa: E402
 from jevmod.judge import CATEGORIES, Judge, Message  # noqa: E402
 from jevmod.keys import get_api_key  # noqa: E402
 
 DATA = Path(__file__).parent / "data" / "items.jsonl"
 RESULTS = Path(__file__).parent / "results"
 OUT = RESULTS / "load.jsonl"
-CATS = [c for c in CATEGORIES if c != "offtopic"]
+# The categories that ship on, which is what a server is charged for. Excluding `offtopic` by
+# name used to be the same thing and stopped being it when `ai_generated` arrived off by
+# default: see the note in `run_jevmod.py`, where it put 26% on a published cost figure.
+CATS = [c for c in CATEGORIES if DEFAULT_ACTIONS.get(c, "flag") != "off"]
 BATCH = 25
 LEVELS = (1, 2, 4, 8, 16)
 PER_WORKER = 4  # requests each worker sends at a level; enough for a p95, small enough to stop fast
