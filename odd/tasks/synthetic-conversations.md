@@ -101,7 +101,7 @@ Out:
       stop and say so, because everything downstream is then meaningless.
 - [ ] T4. The scorer: each closing line alone and in context, A against B and A against C, with the
       repeat-run noise floor from JEV-60 as the reference.
-- [ ] T5. How many pairs the comparison needs, computed before spending anything on judging.
+- [x] T5. How many pairs the comparison needs, computed before spending anything on judging.
 - [ ] T6. The write-up, including what this set cannot be used for.
 
 ## Acceptance
@@ -156,7 +156,56 @@ Two things noted and not chased:
 Three scenarios is an anecdote. It is enough to say the plan is worth building and not enough to say
 anything about the feature.
 
+### T5, how many pairs, computed before generating any
+
+`power.py`, free, no API calls. Paired sign test, two-sided, alpha 0.05, 20,000 simulated trials per
+cell. The sign test only counts directions, so every number below is an upper bound.
+
+**Detecting that the arms separate at all** is cheap, because the seed's effect is large against its
+spread. Each row widens the spread, because a standard deviation from three points has its own 95%
+interval running from about half the estimate to six times it:
+
+| if the between-scenario spread is | A−B, 80% | A−B, 90% | A−C, 80% | A−C, 90% |
+|---|---|---|---|---|
+| as measured (×1) | 6 | 9 | 6 | 6 |
+| ×1.5 | 12 | 15 | 6 | 6 |
+| ×2 | 17 | 23 | 6 | 9 |
+| ×3 | 35 | 44 | 12 | 15 |
+
+Six is the floor of the sign test, not a result: below six scenarios no outcome at all can reach
+significance, however clean.
+
+**Estimating how often it changes the verdict** is an order of magnitude more expensive, and it is
+the number that actually decides whether a 41% cost increase is worth paying:
+
+| to pin that fraction to | if it is near 1 in 3 | if it is near 1 in 10 |
+|---|---|---|
+| ±15 points | 40 | 20 |
+| ±10 points | 90 | 40 |
+| ±5 points | 350 | 140 |
+| ±3 points | 950 | 390 |
+
+**Repeats buy almost nothing; scenarios buy everything.** Within one cell the spread across three
+repeats is about 0.029. Between scenarios it is 0.156, five times larger. A scenario's mean over r
+repeats has variance `sd_between² + sd_within²/r`, and the second term is already 3.6% of the first
+at r=1. So judge each cell once. `gate.py` keeps its three repeats because its job is to show the
+same string scores the same, which is the one place the within-cell number is the point.
+
+**Money does not decide this.** At $0.00009 a judgement, 400 scenarios is $0.15.
+
+### The number: 120
+
+Question 1 needs 23 for A−B and 9 for A−C at 90% power even if the spread is twice what three pairs
+suggested, so 120 leaves room for the estimate to be wrong and for scenarios to be thrown away —
+and two of the first three were thrown away. Question 2 lands the changed-verdict fraction at about
+±8 points, enough to say "roughly one in three" or "roughly one in ten" and not enough to say "31%".
+Which of those it is already settles the cost question.
+
+**Stop and read the numbers at 40.** If A−C is not separating by then, the remaining 80 scenarios
+would be spent putting a confidence interval around a feature that does not work.
+
 ## Next step
 
-T5, the power calculation, before T2 generates anything: how many pairs the A−B and A−C comparisons
-need, given the spreads above and the repeat-run floor.
+T2: the generator. It inherits two rules the gate produced by breaking two of three scenarios —
+the closing line must be ambiguous alone, and a hard negative may borrow the positive's register
+but never its imagery — and one from here: one judgement per cell, not three.
