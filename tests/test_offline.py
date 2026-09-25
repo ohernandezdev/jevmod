@@ -251,6 +251,112 @@ def test_experimental_categories_ship_off_and_do_not_move():
         assert p.nudge(category, 0.03) == DEFAULT_THRESHOLDS[category]
 
 
+def test_a_stored_experimental_action_above_flag_is_loaded_as_flag():
+    """`set_category` refuses delete/timeout on an experimental category, but a policy can arrive without
+    passing through it: from storage, written by an older version or by another caller. Loading must not
+    crash moderation for that server, and it must never let the category remove a message either."""
+    from jevmod.core.policy import EXPERIMENTAL
+
+    for category in EXPERIMENTAL:
+        for stored in ("delete", "timeout"):
+            p = Policy.from_dict({"actions": {category: stored, "scam": "delete"}})
+            assert p.actions[category] == "flag"
+            assert p.actions["scam"] == "delete", "only the experimental category is capped"
+            d = decide(p, v("m", {category: 0.99}))
+            assert (d.action, d.category) == ("flag", category)
+        assert Policy.from_dict({"actions": {category: "off"}}).actions[category] == "off"
+
+
+def test_decide_never_removes_on_an_experimental_category():
+    """The last line: `policy.actions` is a plain dict and callers write to it directly, so decide() caps an
+    experimental category at flag whatever the dict says."""
+    from jevmod.core.policy import EXPERIMENTAL
+
+    for category in EXPERIMENTAL:
+        p = Policy()
+        p.actions[category] = "timeout"
+        d = decide(p, v("m", {category: 0.99, "spam": 0.1}))
+        assert (d.action, d.category) == ("flag", category)
+
+
+def test_selfharm_is_flag_only_on_every_path():
+    """The site and AGENTS.md say self harm only ever flags, at any line, and that it is not a setting. Nothing
+    enforced it: `set_category("selfharm", "timeout")` was accepted and `decide()` applied it. It may still be
+    turned off, as it could before."""
+    import pytest
+
+    p = Policy()
+    for forbidden in ("delete", "timeout"):
+        with pytest.raises(ValueError, match="selfharm"):
+            p.set_category("selfharm", forbidden)
+    assert p.actions["selfharm"] == "flag"
+    p.set_category("selfharm", "off")
+    assert p.actions["selfharm"] == "off"
+
+    for stored in ("delete", "timeout"):
+        loaded = Policy.from_dict({"actions": {"selfharm": stored, "scam": "delete"}})
+        assert loaded.actions["selfharm"] == "flag"
+        assert loaded.actions["scam"] == "delete"
+        d = decide(loaded, v("m", {"selfharm": 0.99}))
+        assert (d.action, d.category) == ("flag", "selfharm")
+    assert Policy.from_dict({"actions": {"selfharm": "off"}}).actions["selfharm"] == "off"
+
+    direct = Policy()
+    direct.actions["selfharm"] = "timeout"
+    d = decide(direct, v("m", {"selfharm": 0.99, "spam": 0.1}))
+    assert (d.action, d.category) == ("flag", "selfharm")
+
+
+def test_flag_only_is_experimental_plus_selfharm():
+    from jevmod.core.policy import EXPERIMENTAL, FLAG_ONLY
+
+    assert set(FLAG_ONLY) == set(EXPERIMENTAL) | {"selfharm"}
+    assert "selfharm" not in EXPERIMENTAL, "selfharm is measured; the feedback loop still moves its line"
+
+
+def test_js_policy_defaults_match_python():
+    """packages/jevmod-js/src/policy.ts is a port with its own copy of the defaults. It shipped selfharm at
+    0.8 after Python moved to 0.5. Read both and require them equal, so the next drift fails here."""
+    import json
+    import re
+
+    from jevmod.core.policy import (
+        ACTIONS,
+        DEFAULT_ACTIONS,
+        DEFAULT_THRESHOLDS,
+        EXPERIMENTAL,
+        FLAG_ONLY,
+        POLICY_VERSION,
+        RULE_THRESHOLD,
+    )
+
+    ts = (Path(__file__).resolve().parents[1] / "packages/jevmod-js/src/policy.ts").read_text("utf-8")
+
+    def obj(name: str) -> dict:
+        body = re.search(rf"export const {name}\b[^=]*=\s*\{{(.*?)\}};", ts, re.S)
+        assert body, f"{name} not found in policy.ts"
+        return {k: json.loads(val) for k, val in re.findall(r"(\w+):\s*([\d.]+|\"\w+\")", body[1])}
+
+    def arr(name: str) -> list:
+        body = re.search(rf"export const {name}\b[^=]*=\s*\[(.*?)\]", ts, re.S)
+        assert body, f"{name} not found in policy.ts"
+        return re.findall(r"\"(\w+)\"", body[1])
+
+    def num(name: str) -> float:
+        m = re.search(rf"export const {name}\s*=\s*([\d.]+);", ts)
+        assert m, f"{name} not found in policy.ts"
+        return float(m[1])
+
+    assert obj("DEFAULT_THRESHOLDS") == DEFAULT_THRESHOLDS
+    assert obj("DEFAULT_ACTIONS") == DEFAULT_ACTIONS
+    assert arr("ACTIONS") == list(ACTIONS)
+    assert arr("EXPERIMENTAL") == list(EXPERIMENTAL)
+    assert "export const FLAG_ONLY" in ts and "...EXPERIMENTAL" in ts, "FLAG_ONLY must be built from EXPERIMENTAL"
+    assert arr("FLAG_ONLY") == [c for c in FLAG_ONLY if c not in EXPERIMENTAL]
+    assert num("RULE_THRESHOLD") == RULE_THRESHOLD
+    assert num("POLICY_VERSION") == POLICY_VERSION
+
+
 def test_env_example_never_assigns_a_key_twice():
     """Two assignments of one key means the effective value depends on parse order. JEVMOD_MONTHLY_QUOTA was
     set to 0 and then to 5000 in the same file, so copying half of it gave an unlimited free plan."""

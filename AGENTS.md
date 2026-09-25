@@ -36,7 +36,7 @@ Decision.to_dict() -> dict   # probabilities rounded to 4 places
 ```
 
 Defaults (`jevmod/core/policy.py`): spam 0.85, scam 0.75, harassment 0.75, nsfw 0.80, offtopic
-0.90 (off), selfharm 0.80 (flag only), doxxing 0.80, minors 0.70, rules 0.80. `decide()` picks the
+0.90 (off), selfharm 0.50 (flag only), doxxing 0.80, minors 0.70, rules 0.80. `decide()` picks the
 most severe action whose threshold is crossed, ties to the higher probability.
 
 Lower level: `Judge(client=None, cache_ttl_s=86400, timeout_s=20.0).judge(messages: list[Message],

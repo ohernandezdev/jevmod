@@ -61,6 +61,13 @@ DEFAULT_THRESHOLDS = {
 # selfharm is flag-only by design: moderators should reach out, not punish. doxxing/minors flag by default;
 # communities that want automatic removal set delete/timeout explicitly.
 EXPERIMENTAL = ("ai_generated",)  # never moved by the feedback loop until measured on real traffic
+# Categories that can be off or flag and nothing else, on every path: `set_category` refuses more, and
+# `from_dict` and `decide()` cap at flag. The experimental ones because their precision on real traffic is too
+# low to remove a message. selfharm because of what a hit is: its line sits at 0.50 on purpose (see
+# DEFAULT_THRESHOLDS), trading five more false positives for ten fewer missed cries for help, and that trade only
+# holds if a hit puts the message in front of a person. A line that low deleting a message or timing a member
+# out would punish the people it exists to find. The site promises this is not a setting.
+FLAG_ONLY = (*EXPERIMENTAL, "selfharm")
 DEFAULT_ACTIONS = {
     "spam": "flag",
     "scam": "flag",
@@ -117,10 +124,15 @@ class Policy:
             raise ValueError(f"unknown category {category!r}; one of {', '.join(CATEGORIES)}")
         if action not in ACTIONS:
             raise ValueError(f"unknown action {action!r}; one of {', '.join(ACTIONS)}")
-        if category in EXPERIMENTAL and action not in ("off", "flag"):
+        if _capped(category, action) != action:
+            if category in EXPERIMENTAL:
+                raise ValueError(
+                    f"{category} is experimental and can only be off or flag: its precision on a real community's "
+                    "traffic is too low to remove a message or time a member out"
+                )
             raise ValueError(
-                f"{category} is experimental and can only be off or flag: its precision on a real community's "
-                "traffic is too low to remove a message or time a member out"
+                f"{category} can only be off or flag: a hit means somebody may need help, so it goes to a "
+                "moderator and never removes a message or times a member out"
             )
         self.actions[category] = action
         if threshold is not None:
@@ -244,6 +256,12 @@ class Policy:
         for k in ("thresholds", "actions", "rules", "rule_actions", "rule_thresholds", "patterns", "pattern_actions"):
             if isinstance(d.get(k), dict):
                 getattr(p, k).update(d[k])
+        # A stored policy does not pass through `set_category`: it may have been written by an older version or
+        # by a caller that wrote the dict directly. Refusing it here would stop moderation for that server on
+        # every message, so a flag-only category above flag is loaded as flag instead.
+        for c in FLAG_ONLY:
+            if c in p.actions:
+                p.actions[c] = _capped(c, p.actions[c])
         if "timeout_minutes" in d:
             p.timeout_minutes = int(d["timeout_minutes"])
         if "link_mode" in d:
@@ -296,7 +314,7 @@ def decide(policy: Policy, v: Verdict) -> Decision:
         return Decision(v.message_id, "none", None, 0.0, scores, False, v.reason)
     hits: list[tuple[str, float, str]] = []
     for c, p in v.scores.items():
-        action = policy.actions.get(c, "off")
+        action = _capped(c, policy.actions.get(c, "off"))
         if action != "off" and p >= policy.thresholds.get(c, 1.0):
             hits.append((c, p, action))
     for n, p in v.custom.items():
@@ -307,6 +325,14 @@ def decide(policy: Policy, v: Verdict) -> Decision:
         return Decision(v.message_id, "none", None, 0.0, scores, True, v.reason)
     category, p, action = max(hits, key=lambda h: (ACTIONS.index(h[2]), h[1]))
     return Decision(v.message_id, action, category, p, scores, True, v.reason)
+
+
+def _capped(category: str, action: str) -> str:
+    """A FLAG_ONLY category can be off or flag and nothing else. `set_category` refuses more; the load path
+    and `decide()` cap at flag, because `actions` is a plain dict that callers also write to directly."""
+    if category in FLAG_ONLY and action != "off":
+        return "flag"
+    return action
 
 
 def _clamp(x: float) -> float:

@@ -54,7 +54,7 @@ A decision looks like this, the same as the Python `Decision.to_dict()` and the 
 ### Policy
 
 Defaults: every category flags except `offtopic`, which is off (it needs a `channelTopic` to be useful).
-Thresholds: spam 0.85, scam 0.75, harassment 0.75, nsfw 0.8, offtopic 0.9, selfharm 0.8, doxxing 0.8, minors 0.7.
+Thresholds: spam 0.85, scam 0.75, harassment 0.75, nsfw 0.8, offtopic 0.9, selfharm 0.5, doxxing 0.8, minors 0.7.
 Custom rules default to `flag` at 0.8; at most five per policy. `policy.nudge("spam")` raises a threshold by 0.03
 (false-positive feedback). `JSON.stringify(policy)` and `Policy.fromJSON(obj)` use the same shape as the Python
 package and `GET/PUT /v1/policy`, so a policy can move between the three.

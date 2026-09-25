@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- An experimental category (`ai_generated`) is flag-only on every path, not only through `set_category`. A stored
+  policy holding delete or timeout for it loads as flag (`Policy.from_dict`, JS `Policy.fromJSON`), and
+  `decide()` never applies more than flag to it in either package.
+- `selfharm` is flag-only, as the README and the site already said. Nothing enforced it:
+  `set_category("selfharm", "timeout")` was accepted and applied. It now joins the experimental categories in a
+  new `FLAG_ONLY` constant (Python and JS, exported from both), so `set_category`/`setCategory` refuse delete and
+  timeout, a stored delete or timeout loads as flag, and `decide()` caps it at flag. It can still be turned off.
+  The reason is the 0.50 line: that low a line only makes sense when a hit reaches a moderator.
+- JS package: the `selfharm` default threshold is 0.5, as in Python since JEV-59. It was still 0.8. A test now
+  compares the JS defaults with Python's.
+
 ## 0.2.1
 
 - `jevmod api` binds `127.0.0.1` by default. 0.2.0 bound `0.0.0.0`, so installing the package and starting the

@@ -1,6 +1,6 @@
 // Offline: Policy and decide() are pure code and must match jevmod/core/policy.py.
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ACTIONS, DEFAULT_THRESHOLDS, POLICY_VERSION, Policy, Verdict, decide, decisionToJSON } from "../src/index.js";
+import { DEFAULT_ACTIONS, DEFAULT_THRESHOLDS, EXPERIMENTAL, FLAG_ONLY, POLICY_VERSION, Policy, Verdict, decide, decisionToJSON } from "../src/index.js";
 
 describe("Policy", () => {
   it("starts flag-only with offtopic off", () => {
@@ -108,5 +108,70 @@ describe("decide", () => {
     const p = new Policy();
     const d = decide(p, new Verdict("1", { spam: 0.9, scam: 0.9 }, true, "jev"));
     expect(d.category).toBe("spam");
+  });
+});
+
+describe("experimental categories are flag-only on every path", () => {
+  it("refuses delete and timeout through setCategory", () => {
+    const p = new Policy();
+    for (const category of EXPERIMENTAL) {
+      for (const action of ["delete", "timeout"]) expect(() => p.setCategory(category, action)).toThrow(/experimental/);
+    }
+  });
+
+  it("loads a stored delete or timeout as flag, and leaves other categories alone", () => {
+    for (const category of EXPERIMENTAL) {
+      for (const stored of ["delete", "timeout"]) {
+        const p = Policy.fromJSON({ actions: { [category]: stored, scam: "delete" } });
+        expect(p.actions[category]).toBe("flag");
+        expect(p.actions["scam"]).toBe("delete");
+        const d = decide(p, new Verdict("1", { [category]: 0.99 }, true, "jev"));
+        expect([d.action, d.category]).toEqual(["flag", category]);
+      }
+      expect(Policy.fromJSON({ actions: { [category]: "off" } }).actions[category]).toBe("off");
+    }
+  });
+
+  it("caps decide() at flag even when the actions map was written directly", () => {
+    for (const category of EXPERIMENTAL) {
+      const p = new Policy();
+      p.actions[category] = "timeout";
+      const d = decide(p, new Verdict("1", { [category]: 0.99, spam: 0.1 }, true, "jev"));
+      expect([d.action, d.category]).toEqual(["flag", category]);
+    }
+  });
+});
+
+describe("selfharm is flag-only on every path", () => {
+  // The site says self harm only ever flags, at any line, and that it is not a setting. It may still be off.
+  it("is in FLAG_ONLY with the experimental categories", () => {
+    expect([...FLAG_ONLY].sort()).toEqual([...EXPERIMENTAL, "selfharm"].sort());
+    expect(EXPERIMENTAL).not.toContain("selfharm");
+  });
+
+  it("refuses delete and timeout through setCategory, and still accepts off", () => {
+    const p = new Policy();
+    for (const action of ["delete", "timeout"]) expect(() => p.setCategory("selfharm", action)).toThrow(/selfharm/);
+    expect(p.actions["selfharm"]).toBe("flag");
+    p.setCategory("selfharm", "off");
+    expect(p.actions["selfharm"]).toBe("off");
+  });
+
+  it("loads a stored delete or timeout as flag", () => {
+    for (const stored of ["delete", "timeout"]) {
+      const p = Policy.fromJSON({ actions: { selfharm: stored, scam: "delete" } });
+      expect(p.actions["selfharm"]).toBe("flag");
+      expect(p.actions["scam"]).toBe("delete");
+      const d = decide(p, new Verdict("1", { selfharm: 0.99 }, true, "jev"));
+      expect([d.action, d.category]).toEqual(["flag", "selfharm"]);
+    }
+    expect(Policy.fromJSON({ actions: { selfharm: "off" } }).actions["selfharm"]).toBe("off");
+  });
+
+  it("caps decide() at flag even when the actions map was written directly", () => {
+    const p = new Policy();
+    p.actions["selfharm"] = "timeout";
+    const d = decide(p, new Verdict("1", { selfharm: 0.99, spam: 0.1 }, true, "jev"));
+    expect([d.action, d.category]).toEqual(["flag", "selfharm"]);
   });
 });

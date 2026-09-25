@@ -15,7 +15,7 @@ export const DEFAULT_THRESHOLDS: Readonly<Record<CategoryName, number>> = {
   harassment: 0.75,
   nsfw: 0.8,
   offtopic: 0.9,
-  selfharm: 0.8,
+  selfharm: 0.5,
   doxxing: 0.8,
   minors: 0.7,
   ai_generated: 0.85,
@@ -23,6 +23,10 @@ export const DEFAULT_THRESHOLDS: Readonly<Record<CategoryName, number>> = {
 // Experimental categories are never moved by feedback: their measured precision at a realistic rate is too low
 // for a single reaction to carry information about where the line belongs. Mirrors EXPERIMENTAL in policy.py.
 export const EXPERIMENTAL: readonly string[] = ["ai_generated"];
+// Categories that can be off or flag and nothing else, on every path. Mirrors FLAG_ONLY in policy.py, which
+// carries the full reasoning: the experimental ones for their precision, selfharm because its line sits at 0.50
+// on purpose and that trade only holds if a hit reaches a person instead of removing a message or a member.
+export const FLAG_ONLY: readonly string[] = [...EXPERIMENTAL, "selfharm"];
 // selfharm is flag-only by design: moderators should reach out, not punish. doxxing/minors flag by default;
 // communities that want automatic removal set delete/timeout explicitly.
 export const DEFAULT_ACTIONS: Readonly<Record<CategoryName, Action>> = {
@@ -98,10 +102,16 @@ export class Policy {
     if (!isAction(action)) {
       throw new Error(`unknown action '${action}'; one of ${ACTIONS.join(", ")}`);
     }
-    if (EXPERIMENTAL.includes(category) && action !== "off" && action !== "flag") {
+    if (capped(category, action) !== action) {
+      if (EXPERIMENTAL.includes(category)) {
+        throw new Error(
+          `${category} is experimental and can only be off or flag: its precision on real traffic is too low to ` +
+            "remove a message or time a member out",
+        );
+      }
       throw new Error(
-        `${category} is experimental and can only be off or flag: its precision on real traffic is too low to ` +
-          "remove a message or time a member out",
+        `${category} can only be off or flag: a hit means somebody may need help, so it goes to a moderator and ` +
+          "never removes a message or times a member out",
       );
     }
     this.actions[category] = action;
@@ -164,6 +174,12 @@ export class Policy {
     };
     merge(p.thresholds, "thresholds");
     merge(p.actions, "actions");
+    // A stored policy does not pass through setCategory. Refusing it here would stop moderation on every
+    // message, so a flag-only category above flag is loaded as flag instead, like the Python from_dict.
+    for (const c of FLAG_ONLY) {
+      const a = p.actions[c];
+      if (a !== undefined) p.actions[c] = capped(c, a);
+    }
     merge(p.rules, "rules");
     merge(p.ruleActions, "rule_actions");
     merge(p.ruleThresholds, "rule_thresholds");
@@ -205,7 +221,7 @@ export function decide(policy: Policy, v: Verdict): Decision {
   if (!v.judged) return build("none", null, 0, false);
   const hits: Array<[string, number, Action]> = [];
   for (const [c, p] of Object.entries(v.scores)) {
-    const action = policy.actions[c] ?? "off";
+    const action = capped(c, policy.actions[c] ?? "off");
     if (action !== "off" && isAction(action) && p >= (policy.thresholds[c] ?? 1.0)) hits.push([c, p, action]);
   }
   for (const [n, p] of Object.entries(v.custom)) {
@@ -230,6 +246,12 @@ export function decisionToJSON(d: Decision): Decision {
   const scores: Record<string, number> = {};
   for (const [k, v] of Object.entries(d.scores)) scores[k] = round4(v);
   return { ...d, probability: round4(d.probability), scores };
+}
+
+/** A FLAG_ONLY category can be off or flag and nothing else. setCategory refuses more; fromJSON and
+ * decide() cap at flag, because `actions` is a plain object that callers also write to directly. */
+function capped(category: string, action: string): string {
+  return FLAG_ONLY.includes(category) && action !== "off" ? "flag" : action;
 }
 
 function round4(x: number): number {

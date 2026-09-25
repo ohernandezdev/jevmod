@@ -209,7 +209,7 @@ terminal while working. [AGENTS.md](AGENTS.md) has every signature; [docs/llms.t
 | `harassment` | insults, slurs, threats, targeted abuse, in any language | flag ≥ 0.75 |
 | `nsfw` | sexual or gore content for a general audience (below the threshold means SFW) | flag ≥ 0.80 |
 | `offtopic` | unrelated to `channel_topic`; needs a topic to mean anything | off, 0.90 |
-| `selfharm` | the author is in crisis or considering self-harm; alert moderators, never punish | flag ≥ 0.80 |
+| `selfharm` | the author is in crisis or considering self-harm; alert moderators, never punish | flag ≥ 0.50 |
 | `doxxing` | reveals or hunts private data about a real person | flag ≥ 0.80 |
 | `minors` | sexualises a minor or shows grooming behaviour | flag ≥ 0.70 |
 | `rule:<name>` | your rule in plain language, exceptions included, up to 5 | flag ≥ 0.80 |
