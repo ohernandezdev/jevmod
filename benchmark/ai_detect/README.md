@@ -3,6 +3,11 @@
 A self-contained experiment asking whether jevmod should ship an `ai_generated` category. The answer, the
 numbers and the recommendation are in [REPORT.md](REPORT.md). This file is how to re-run it.
 
+[REPORT2.md](REPORT2.md) found the batch moves the score, [REPORT3.md](REPORT3.md) proposed changing the
+question to AI slop (`slop.py`, formulation D), and [REPORT4.md](REPORT4.md) measured D through Judge, unpadded,
+no channel context, all nine categories (`through_judge.py`). D was not shipped: Omar chose the recall of the
+authorship question, and `ai_generated` still asks it.
+
 ## What it does
 
 520 short texts (260 written by ChatGPT, 260 written by people), each truncated to 400 characters and

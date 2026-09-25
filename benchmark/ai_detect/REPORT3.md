@@ -98,7 +98,10 @@ than a threshold that buys recall.
 
 ## What to ship
 
-`D >= 0.85`, flag only, off by default, described as a slop rule and not as AI detection. Optionally
+`D >= 0.85`, flag only, off by default, described as a slop rule and not as AI detection. **Measured through
+Judge, unpadded, no channel context, all nine categories on 2026-09-25: [REPORT4.md](REPORT4.md).** It passes
+every criterion as written, the careful-human row by one text and only with the 300 non-native learners in the
+pool (5.0% without them). Not shipped: `ai_generated` keeps the authorship question. Optionally
 `OR regex`, which trades a near-zero false-positive rate for 24 more points of recall; that trade needs
 the disagreement set read, and `results/disagree_D.md` has all 129 items.
 
